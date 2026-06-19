@@ -1,0 +1,60 @@
+# goformat.toml — example configuration.
+# Drop this at the repo root (or pass --config). Every key is optional;
+# anything you omit falls back to the lnd-style defaults below.
+
+# 80-character line limit, tabs treated as 8 spaces.
+line_length = 80
+tab_width   = 8
+
+# When false (default), goformat only rewrites code that violates a rule.
+# Code that's merely "acceptable" instead of "preferred" is left alone.
+# Set true to always canonicalize to the "preferred" form.
+canonicalize = false
+
+# Formatting-style calls whose overlong lines get the compact wrap
+# exception (string-literal split on `+`, argument list packed).
+formatting_funcs = [
+  "fmt.Errorf",
+  "fmt.Printf",
+  "fmt.Sprintf",
+  "log.Tracef",
+  "log.Debugf",
+  "log.Infof",
+  "log.Warnf",
+  "log.Errorf",
+  "log.Criticalf",
+  "t.Errorf",
+  "t.Fatalf",
+  "require.NoErrorf",
+  "require.Errorf",
+  "assert.Errorf",
+  "t.Logf",
+]
+
+# Calls that look like formatting functions but must be wrapped normally
+# because they're flow-relevant (assertion helpers etc.).
+formatting_funcs_deny = [
+
+]
+
+# Method names recognised as structured-log calls (signature: ctx, msg,
+# variadic attrs). When no type info is available, detection is name-based;
+# Phase 4 type-info mode (post-v0.1) refines this.
+structured_log_methods = [
+  "TraceS", "DebugS", "InfoS", "WarnS", "ErrorS", "CriticalS",
+]
+
+[rules]
+# All rules are on by default; flip to false to disable.
+# switch_case_spacing       = true   # R1
+# func_signature_body_blank = true   # R2
+# func_def_wrap             = true   # R3
+# func_call_wrap            = true   # R4
+# formatting_fn_compact     = true   # R5
+# structured_log_wrap       = true   # R8
+# inline_composite_lit      = true   # R7 (composite-literal reflow)
+# string_lit_wrap           = true   # R9
+# stanza_spacing            = true   # R11
+# body_split                = true   # R12
+# var_block_wrap            = true   # R13
+# comment_reflow            = true   # R15

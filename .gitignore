@@ -1,0 +1,5 @@
+/goformat
+/goformat-*
+*.test
+/coverage.out
+.vscode/
