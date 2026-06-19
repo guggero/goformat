@@ -41,17 +41,17 @@ func (funcSignatureBodyBlank) Apply(ctx *Context) []diag.Diagnostic {
 			// decorations to the previous token when Before=None).
 			multi := ctx.MultilineSigs[s]
 			origMulti := ctx.OriginalMultilineSigs[s]
-			if multi {
-				setBodyBlank(s.Body, true)
-			} else if origMulti {
-				setBodyBlank(s.Body, false)
-			}
+			setBodyBlank(s.Body, multi, origMulti)
 
 		case *dst.FuncLit:
 			if s.Body == nil || len(s.Body.List) == 0 {
 				return true
 			}
-			setBodyBlank(s.Body, headerMultiLine(ctx, s))
+			setBodyBlank(
+				s.Body,
+				headerMultiLine(ctx, s),
+				sourceHeaderMultiLine(ctx, s),
+			)
 
 		case *dst.IfStmt, *dst.ForStmt, *dst.RangeStmt,
 			*dst.SwitchStmt, *dst.TypeSwitchStmt:
@@ -59,7 +59,11 @@ func (funcSignatureBodyBlank) Apply(ctx *Context) []diag.Diagnostic {
 			if body == nil || len(body.List) == 0 {
 				return true
 			}
-			setBodyBlank(body, headerMultiLine(ctx, s.(dst.Stmt)))
+			setBodyBlank(
+				body,
+				headerMultiLine(ctx, s.(dst.Stmt)),
+				sourceHeaderMultiLine(ctx, s.(dst.Stmt)),
+			)
 			// SelectStmt deliberately excluded: its "header" is just
 			// "select", never multi-line.
 		}
@@ -68,30 +72,49 @@ func (funcSignatureBodyBlank) Apply(ctx *Context) []diag.Diagnostic {
 	return nil
 }
 
-// setBodyBlank enforces R2 both ways: when the header is multi-line, the body's
-// first statement gets a leading blank line; when the header is single-line,
-// any blank that was there (carried over from the source or set by an earlier
-// pass) is cleared. Without the second half, R3 collapsing a multi-line sig
-// back to single-line would leave a stale leading blank in the body — a
-// regression flagged on the btcd updater.go AddInRedeemScript collapse.
-func setBodyBlank(body *dst.BlockStmt, headerMulti bool) {
+// setBodyBlank enforces R2 in both directions, but only when the change is
+// driven by a header layout change — not when the developer wrote a blank
+// they want to keep:
+//
+//   - finalMulti=true  → body's first statement gets a leading blank line.
+//   - finalMulti=false AND sourceMulti=true → the blank is stale (R3 or
+//     R16 collapsed a multi-line header), clear it.
+//   - finalMulti=false AND sourceMulti=false → header was always single-
+//     line; any existing blank is the developer's deliberate stanza
+//     separator, leave it alone. (btcd psbt/finalizer.go has
+//     `switch {\n\n\t// comment\n\tcase ...` — the blank reads as a
+//     stanza header and must survive.)
+func setBodyBlank(body *dst.BlockStmt, finalMulti, sourceMulti bool) {
 	first := body.List[0]
 	decs := first.Decorations()
 	if decs == nil {
 		return
 	}
-	if headerMulti {
+	if finalMulti {
 		decs.Before = dst.EmptyLine
 		return
 	}
-
-	// Single-line header: clear ONLY the blank-line marker. dst.NewLine
-	// (single newline) belongs to other passes — R12 uses it to split a
-	// single-line function body — and undoing it here would collapse the
-	// body back inline.
-	if decs.Before == dst.EmptyLine {
+	if sourceMulti && decs.Before == dst.EmptyLine {
 		decs.Before = dst.None
 	}
+}
+
+// sourceHeaderMultiLine reports whether the header span in the SOURCE
+// (keyword through body lbrace) was multi-line. Used by R2 to decide
+// whether an existing body blank is a stale artifact (worth clearing
+// once the final header is single-line) or a developer-intended stanza
+// separator (worth keeping).
+func sourceHeaderMultiLine(ctx *Context, node dst.Node) bool {
+	astN, ok := ctx.Decorator.Ast.Nodes[node]
+	if !ok {
+		return false
+	}
+	start, lbrace := astHeaderSpan(astN)
+	if !start.IsValid() || !lbrace.IsValid() {
+		return false
+	}
+	return ctx.FileSet.Position(start).Line !=
+		ctx.FileSet.Position(lbrace).Line
 }
 
 // headerMultiLine reports whether a function literal or control-flow
