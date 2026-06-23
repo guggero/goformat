@@ -25,11 +25,11 @@ func TestUnitPairs(t *testing.T) {
 		t.Skip("no testdata/unit pairs found")
 	}
 
-	cfg := config.Default()
 	for _, in := range matches {
 		in := in
 		base := strings.TrimSuffix(filepath.Base(in), ".in.go")
 		rule := filepath.Base(filepath.Dir(in))
+		cfg := cfgForPair(base)
 		t.Run(rule+"/"+base, func(t *testing.T) {
 			src, err := os.ReadFile(in)
 			if err != nil {
@@ -70,9 +70,10 @@ func TestIdempotent(t *testing.T) {
 	if len(matches) == 0 {
 		t.Skip("no testdata/unit golden files found")
 	}
-	cfg := config.Default()
 	for _, out := range matches {
 		out := out
+		base := strings.TrimSuffix(filepath.Base(out), ".out.go")
+		cfg := cfgForPair(base)
 		t.Run(filepath.Base(out), func(t *testing.T) {
 			src, err := os.ReadFile(out)
 			if err != nil {
@@ -91,6 +92,18 @@ func TestIdempotent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// cfgForPair returns the config a testdata pair is formatted with. A pair whose
+// base name ends in ".opt" (e.g. collapse.opt.in.go) is formatted with
+// Optimize=true so we can keep coverage of the soft, space-efficiency layouts
+// (collapse, symmetry-on-fitting-code, string joins) that are off by default.
+func cfgForPair(base string) *config.Config {
+	cfg := config.Default()
+	if strings.HasSuffix(base, ".opt") {
+		cfg.Optimize = true
+	}
+	return cfg
 }
 
 // TestParseError surfaces parse failures as errors (not silent passes).

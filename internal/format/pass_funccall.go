@@ -98,6 +98,18 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 			return true
 		}
 
+		// HARD-only by default: a call is reformatted solely to resolve an
+		// over-limit line. If every line the call occupies already fits,
+		// the author's layout is structurally valid, so leave it untouched.
+		// Space-efficiency reflows (collapsing a multi-line call, repacking
+		// a one-per-line layout, re-imposing symmetry on fitting code) are
+		// SOFT — opt in with --optimize.
+		if !ctx.Config.Optimize &&
+			allCallLinesFit(ctx, astCall, limit, tab) {
+
+			return true
+		}
+
 		// Layout-fragile contexts: when a call is already multi-line
 		// in source AND every line fits, AND it sits inside an
 		// alignment-sensitive or operator-broken parent, collapsing

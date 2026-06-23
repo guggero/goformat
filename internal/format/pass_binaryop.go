@@ -29,6 +29,29 @@ type binaryOpWrap struct{}
 
 func (binaryOpWrap) Name() string { return "R16" }
 
+// stmtBinaryLinesFit reports whether every source line from the statement start
+// through the end of the binary expression is within the limit. When true, the
+// author's existing operator layout is structurally valid and must be left
+// untouched in the default (non-optimize) mode.
+func stmtBinaryLinesFit(ctx *Context, stmt ast.Node, bin *ast.BinaryExpr,
+	limit, tab int) bool {
+
+	start := ctx.FileSet.Position(stmt.Pos()).Line
+	end := ctx.FileSet.Position(bin.End()).Line
+	if end < start {
+		start, end = end, start
+	}
+	for ln := start; ln <= end; ln++ {
+		if ln <= 0 || ln > len(ctx.SourceLines) {
+			return false
+		}
+		if visualWidth(ctx.SourceLines[ln-1], tab) > limit {
+			return false
+		}
+	}
+	return true
+}
+
 func (binaryOpWrap) Apply(ctx *Context) []diag.Diagnostic {
 	if !ctx.Config.Rules.BinaryOpWrapOn() {
 		return nil
@@ -75,6 +98,17 @@ func (binaryOpWrap) Apply(ctx *Context) []diag.Diagnostic {
 		// statement line. Letting R16 split operators in that case
 		// would over-wrap statements that ultimately fit.
 		if enclosingBlockIsSingleLine(ctx, n, parents) {
+			return true
+		}
+
+		// HARD-only by default: a binary chain is re-broken solely to
+		// resolve an over-limit line. If the statement's current source
+		// lines (from its start through the binary expression) already
+		// fit, the author's operator layout is valid — leave it.
+		// Repacking a fitting chain is a SOFT, --optimize-only change.
+		if !ctx.Config.Optimize &&
+			stmtBinaryLinesFit(ctx, astStmt, astBin, limit, tab) {
+
 			return true
 		}
 

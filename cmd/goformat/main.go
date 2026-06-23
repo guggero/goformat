@@ -82,7 +82,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		explain  = fset.String(
 			"explain", "", "print reference for a rule (e.g. R3)",
 		)
-		rules = fset.Bool("rules", false, "list every rule and exit")
+		rules    = fset.Bool("rules", false, "list every rule and exit")
+		optimize = fset.Bool(
+			"optimize", false, "also apply soft, space-efficiency "+
+				"fixes to code that already fits",
+		)
 	)
 	if err := fset.Parse(args); err != nil {
 		return err
@@ -106,6 +110,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cfg, err := resolveConfig(*cfgPath, *noConfig)
 	if err != nil {
 		return err
+	}
+	if *optimize {
+		cfg.Optimize = true
 	}
 
 	paths := fset.Args()

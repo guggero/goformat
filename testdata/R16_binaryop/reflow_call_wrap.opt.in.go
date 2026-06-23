@@ -7,7 +7,6 @@ func test(ch rune) bool {
 		if strings.ContainsRune(
 			"abc", ch,
 		) && !strings.ContainsRune("def", ch) {
-
 			return true
 		}
 	}

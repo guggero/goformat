@@ -123,7 +123,22 @@ func reflowCommentBlock(in []string, indent, limit int) []string {
 		paragraph = paragraph[:0]
 	}
 
+	outputMode := false
 	for _, entry := range in {
+		// A Go example test's expected-output block ("// Output:" /
+		// "// Unordered output:") is compared verbatim by the testing
+		// framework. Once it starts, emit it and everything after it in
+		// this comment block unchanged — reflowing it breaks the test.
+		if outputMode {
+			out = append(out, entry)
+			continue
+		}
+		if isOutputDirective(entry) {
+			flush()
+			outputMode = true
+			out = append(out, entry)
+			continue
+		}
 		if isParagraphBreaker(entry) {
 			flush()
 			out = append(out, entry)
@@ -133,6 +148,17 @@ func reflowCommentBlock(in []string, indent, limit int) []string {
 	}
 	flush()
 	return out
+}
+
+// isOutputDirective reports whether a "//" comment line begins a Go example
+// test's expected-output block. Matched case-insensitively, mirroring
+// go/doc's example detection ("// Output:" / "// Unordered output:").
+func isOutputDirective(entry string) bool {
+	body := strings.ToLower(
+		strings.TrimSpace(strings.TrimPrefix(entry, "//")),
+	)
+	return strings.HasPrefix(body, "output:") ||
+		strings.HasPrefix(body, "unordered output:")
 }
 
 // isParagraphBreaker reports whether an entry should end the current paragraph

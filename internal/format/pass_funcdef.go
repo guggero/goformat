@@ -55,6 +55,16 @@ func (funcDefWrap) Apply(ctx *Context) []diag.Diagnostic {
 			return true
 		}
 
+		// HARD-only by default: a signature is re-wrapped solely to
+		// resolve an over-limit line. If every line the signature occupies
+		// already fits, the author's layout is valid — leave it. Repacking
+		// or collapsing a fitting signature is a SOFT, --optimize-only
+		// change. (R2's body-blank still works: MultilineSigs is seeded
+		// from the source state in analyse().)
+		if !ctx.Config.Optimize && sigLinesFit(ctx, astFD, limit, tab) {
+			return true
+		}
+
 		breaks, multiLine := decideFuncDefLayout(
 			ctx, astFD, fd, limit, tab,
 		)
@@ -62,6 +72,25 @@ func (funcDefWrap) Apply(ctx *Context) []diag.Diagnostic {
 		return true
 	})
 	return nil
+}
+
+// sigLinesFit reports whether every source line the function signature occupies
+// — from the `func` keyword through the opening body brace — is within the
+// limit. When true, the signature's current layout is structurally valid and
+// must be left untouched in the default (non-optimize) mode.
+func sigLinesFit(ctx *Context, fd *ast.FuncDecl, limit, tab int) bool {
+	fset := ctx.FileSet
+	start := fset.Position(fd.Type.Func).Line
+	end := fset.Position(fd.Body.Lbrace).Line
+	for ln := start; ln <= end; ln++ {
+		if ln <= 0 || ln > len(ctx.SourceLines) {
+			return false
+		}
+		if visualWidth(ctx.SourceLines[ln-1], tab) > limit {
+			return false
+		}
+	}
+	return true
 }
 
 func decideFuncDefLayout(ctx *Context, astFD *ast.FuncDecl, fd *dst.FuncDecl,

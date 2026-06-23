@@ -34,14 +34,19 @@ var (
 			"only supported by v1 (this is a long text on purpose)",
 	)
 
-	ErrInputsNotModifiable = errors.New("inputs are not modifiable in " +
-		"this PSBT")
+	ErrInputsNotModifiable = errors.New(
+		"inputs are not modifiable in this PSBT",
+	)
 
-	ErrInputAlreadyFinalized = errors.New("Cannot finalize PSBT, " +
-		"finalized scriptSig or scriptWitnes already exists")
+	ErrInputAlreadyFinalized = errors.New(
+		"Cannot finalize PSBT, finalized scriptSig or scriptWitnes " +
+			"already exists",
+	)
 
-	ErrInvalidPrevOutNonWitnessTransaction = errors.New("Prevout hash " +
-		"does not match the provided non-witness utxo serialization")
+	ErrInvalidPrevOutNonWitnessTransaction = errors.New(
+		"Prevout hash does not match the provided non-witness utxo " +
+			"serialization",
+	)
 
 	hexString = "70736274ff01007374ff01030100000000002f0000002e2873007374" +
 		"ff0107010000000000000000000000000000000000000006068005000073" +

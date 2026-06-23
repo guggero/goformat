@@ -19,6 +19,16 @@ type Config struct {
 	TabWidth     int  `toml:"tab_width"`
 	Canonicalize bool `toml:"canonicalize"`
 
+	// Optimize enables SOFT fixes: purely space-efficiency reformatting of
+	// code that already fits within LineLength and is structurally valid
+	// (collapsing a multi-line call onto one line, repacking one-arg-per-
+	// line layouts tighter, joining/repacking string concats that break
+	// early, re-imposing symmetry on fitting code, compacting comments that
+	// already fit). When false (the default) goformat only performs HARD
+	// fixes: it reformats a construct solely to resolve an over-limit line
+	// or a required non-space structural rule (mandatory blank lines, etc.).
+	Optimize bool `toml:"optimize"`
+
 	FormattingFuncs     []string `toml:"formatting_funcs"`
 	FormattingFuncsDeny []string `toml:"formatting_funcs_deny"`
 
