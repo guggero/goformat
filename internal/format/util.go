@@ -20,13 +20,15 @@ func splitLines(src []byte) [][]byte {
 }
 
 // visualWidth measures a line's rendered width, expanding tabs to the next
-// multiple of tab. Bytes outside ASCII count as one column each; that's an
-// approximation but matches gofmt's column accounting for the source-line
-// widths we care about (decision-making for wrap rules).
+// multiple of tab and counting every other rune as one column. Counting RUNES
+// (not bytes) is what matches lnd's `ll` linter, which does
+// utf8.RuneCountInString after expanding tabs — so a multi-byte rune like an
+// em-dash counts as one column, not three. Counting bytes here previously
+// over-measured such lines and triggered spurious comment reflows / wraps.
 func visualWidth(line []byte, tab int) int {
 	col := 0
-	for _, b := range line {
-		if b == '\t' {
+	for _, r := range string(line) {
+		if r == '\t' {
 			col += tab - (col % tab)
 			continue
 		}

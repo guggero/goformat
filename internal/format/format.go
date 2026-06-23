@@ -19,12 +19,48 @@ import (
 
 // Format formats Go source. filename is used in error and diagnostic messages.
 // A nil cfg falls back to defaults.
+//
+// The rule pipeline runs from source positions, so a layout decision an OUTER
+// pass makes (wrapping a call, shifting a block's indent) can leave an INNER
+// construct rendered at a column its own pass measured from the stale, pre-wrap
+// position — occasionally yielding a line that is a few columns over the limit,
+// fixed only on a second run. Rather than thread post-mutation indents through
+// every pass, Format iterates the whole pipeline to a fixed point: it re-parses
+// and re-runs until the output stops changing (or a small cap is hit). The
+// result is therefore idempotent by construction. The conservative HARD-only
+// gates keep each pass from churning already-fitting code, so iteration
+// converges (no oscillation) in practice within a couple of rounds.
 func Format(src []byte, filename string,
 	cfg *config.Config) ([]byte, []diag.Diagnostic, error) {
 
 	if cfg == nil {
 		cfg = config.Default()
 	}
+
+	// maxFormatIterations bounds the fixed-point loop. Convergence is
+	// observed within 2–3 rounds; the cap is a safety net against an
+	// unforeseen oscillation (it degrades to "best effort", never hangs).
+	const maxFormatIterations = 6
+
+	cur := src
+	var diags []diag.Diagnostic
+	for i := 0; i < maxFormatIterations; i++ {
+		out, d, err := formatOnce(cur, filename, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		diags = d
+		if bytes.Equal(out, cur) {
+			return out, diags, nil
+		}
+		cur = out
+	}
+	return cur, diags, nil
+}
+
+// formatOnce runs a single pass of the rule pipeline over src.
+func formatOnce(src []byte, filename string,
+	cfg *config.Config) ([]byte, []diag.Diagnostic, error) {
 
 	fset := token.NewFileSet()
 	astFile, err := parser.ParseFile(

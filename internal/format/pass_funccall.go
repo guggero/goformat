@@ -505,15 +505,45 @@ func isDstTypeExpr(e dst.Expr) bool {
 	return false
 }
 
-// allCallLinesFit reports whether every source line in a call's span is within
-// the configured width limit. Used by R5 to leave a valid multi-line formatting
-// call alone rather than rewriting it into the compact "+" form when the
-// developer's split already fits.
+// allCallLinesFit reports whether every source line of a call's OWN argument
+// layout is within the limit. Lines that fall in the INTERIOR of a multi-line
+// argument (a func literal's body, a composite literal's elements, a nested
+// multi-line call) are excluded: those belong to other passes (R3/R7/recursive
+// R4), not to this call's framing. Without that exclusion, one long line deep
+// inside a closure body would force R4 to re-wrap the OUTER call — shifting the
+// whole body a tab deeper and cascading new over-limit lines (a non-idempotent
+// churn). The call's own framing lines (its opening, top-level arg lines, and
+// closing) are still checked.
 func allCallLinesFit(ctx *Context, call *ast.CallExpr, limit, tab int) bool {
 	fset := ctx.FileSet
 	startLine := fset.Position(call.Pos()).Line
 	endLine := fset.Position(call.End()).Line
+
+	// Collect the interior line ranges of multi-line args (strictly between
+	// an arg's first and last line — the first/last lines may carry this
+	// call's framing, e.g. "func(tx) error {" and "})").
+	type lineRange struct{ lo, hi int }
+	var interior []lineRange
+	for _, a := range call.Args {
+		s := fset.Position(a.Pos()).Line
+		e := fset.Position(a.End()).Line
+		if e-1 >= s+1 {
+			interior = append(interior, lineRange{s + 1, e - 1})
+		}
+	}
+	inInterior := func(ln int) bool {
+		for _, r := range interior {
+			if ln >= r.lo && ln <= r.hi {
+				return true
+			}
+		}
+		return false
+	}
+
 	for ln := startLine; ln <= endLine; ln++ {
+		if inInterior(ln) {
+			continue
+		}
 		if ln <= 0 || ln > len(ctx.SourceLines) {
 			return false
 		}

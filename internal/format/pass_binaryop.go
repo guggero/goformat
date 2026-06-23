@@ -75,6 +75,15 @@ func (binaryOpWrap) Apply(ctx *Context) []diag.Diagnostic {
 		if !canSplitOp(bin.Op) {
 			return true
 		}
+		// Pure string-concatenation chains ("a" + "b" + ...) are owned by
+		// R9, which splits/joins at string-body boundaries. R16's operator
+		// breaks here conflict with R9 and, when an operand can't be split
+		// further (a no-space literal), R16's fitK<0 fallback collapses the
+		// chain onto an over-limit line that R9 then can't fix — a churny,
+		// non-idempotent result. Leave string concats to R9.
+		if isStringExpr(bin) {
+			return true
+		}
 		astN, ok := ctx.Decorator.Ast.Nodes[n]
 		if !ok {
 			return true

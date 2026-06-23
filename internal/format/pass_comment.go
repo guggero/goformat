@@ -185,9 +185,12 @@ func isParagraphBreaker(entry string) bool {
 		return true
 	}
 
-	// Indented continuation (extra leading spaces) — code or list
-	// continuation; leave as-is.
-	if strings.HasPrefix(body, "  ") {
+	// Indented continuation (extra leading spaces OR a leading tab) — code,
+	// an ASCII diagram, or a list continuation. These are preformatted, so
+	// leave the line exactly as-is. Tab-indented comment bodies ("//\t…",
+	// common for lnd's storage-hierarchy diagrams) must be matched here too,
+	// otherwise they get normalized to "// \t…" and the art shifts.
+	if strings.HasPrefix(body, "  ") || strings.HasPrefix(body, "\t") {
 		return true
 	}
 
