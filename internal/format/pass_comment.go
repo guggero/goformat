@@ -2,6 +2,7 @@ package format
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dave/dst"
 
@@ -99,7 +100,7 @@ func reflowCommentBlock(in []string, indent, limit int) []string {
 		// not a target.
 		needsReflow := false
 		for _, body := range paragraph {
-			if len(body) > budget {
+			if utf8.RuneCountInString(body) > budget {
 				needsReflow = true
 				break
 			}
@@ -112,7 +113,7 @@ func reflowCommentBlock(in []string, indent, limit int) []string {
 			return
 		}
 		joined := strings.Join(paragraph, " ")
-		if len(joined) <= budget {
+		if utf8.RuneCountInString(joined) <= budget {
 			out = append(out, "// "+joined)
 			paragraph = paragraph[:0]
 			return
@@ -169,8 +170,8 @@ func isParagraphBreaker(entry string) bool {
 		return true
 	}
 	if strings.HasPrefix(entry, "//go:") ||
-		strings.HasPrefix(entry, "//nolint:") ||
-		strings.HasPrefix(entry, "// nolint:") ||
+		strings.HasPrefix(entry, "//nolint") ||
+		strings.HasPrefix(entry, "// nolint") ||
 		strings.HasPrefix(entry, "//line ") {
 
 		return true
@@ -182,6 +183,13 @@ func isParagraphBreaker(entry string) bool {
 
 	// Empty "//" line — paragraph separator.
 	if strings.TrimSpace(body) == "" {
+		return true
+	}
+
+	// "///"-style banner/divider comments (body begins with another "/")
+	// are not prose — reflowing/normalizing them would turn "///" into
+	// "// /". Leave them verbatim.
+	if strings.HasPrefix(body, "/") {
 		return true
 	}
 
@@ -234,11 +242,14 @@ func commentBody(entry string) string {
 // (a long identifier or URL) ends up alone on its own chunk — better than
 // mid-word breakage.
 func splitCommentBody(text string, budget int) []string {
-	if budget <= 0 || len(text) <= budget {
+	// Operate on runes, not bytes: budgets are column counts, and indexing
+	// a byte slice would both miscount multi-byte runes (em-dash, …) and
+	// risk splitting one mid-rune.
+	rest := []rune(text)
+	if budget <= 0 || len(rest) <= budget {
 		return []string{text}
 	}
 	var chunks []string
-	rest := text
 	for len(rest) > budget {
 		splitAt := -1
 		for i := budget; i > 0; i-- {
@@ -261,11 +272,15 @@ func splitCommentBody(text string, budget int) []string {
 		if splitAt <= 0 {
 			break
 		}
-		chunks = append(chunks, rest[:splitAt])
-		rest = strings.TrimLeft(rest[splitAt:], " ")
+		chunks = append(chunks, string(rest[:splitAt]))
+		j := splitAt
+		for j < len(rest) && rest[j] == ' ' {
+			j++
+		}
+		rest = rest[j:]
 	}
 	if len(rest) > 0 {
-		chunks = append(chunks, rest)
+		chunks = append(chunks, string(rest))
 	}
 	return chunks
 }

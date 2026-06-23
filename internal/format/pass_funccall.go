@@ -1,6 +1,7 @@
 package format
 
 import (
+	"bytes"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -107,6 +108,23 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		if !ctx.Config.Optimize &&
 			allCallLinesFit(ctx, astCall, limit, tab) {
 
+			return true
+		}
+
+		// Do no harm: if the callee plus its opening "(" already exceeds
+		// the limit, no argument layout can bring that first line under it
+		// (gofmt keeps "callee(" together — a long selector chain like
+		// foo.bar.(*T).Method( can't be split). Re-wrapping would only
+		// churn the closing layout without fixing anything, so leave the
+		// call as-is and let R10 report the unavoidable over-limit line.
+		callCol := visualCol(
+			ctx.FileSet, ctx.SourceLines, astCall.Pos(), tab,
+		)
+		calleeW := sourceWidth(
+			ctx.FileSet, ctx.SourceLines,
+			astCall.Fun.Pos(), astCall.Fun.End(), tab,
+		)
+		if calleeW < wideForcedBreak && callCol+calleeW+1 > limit {
 			return true
 		}
 
@@ -519,20 +537,28 @@ func allCallLinesFit(ctx *Context, call *ast.CallExpr, limit, tab int) bool {
 	startLine := fset.Position(call.Pos()).Line
 	endLine := fset.Position(call.End()).Line
 
-	// Collect the interior line ranges of multi-line args (strictly between
-	// an arg's first and last line — the first/last lines may carry this
-	// call's framing, e.g. "func(tx) error {" and "})").
+	// Collect the line ranges occupied by multi-line args. R4 controls only
+	// WHERE an arg begins, never the width of the arg's own body lines, so a
+	// multi-line arg's entire span is excluded from this call's overrun
+	// check (an over-limit line inside a wrapped condition / closure / nested
+	// call is some other pass's problem, or irreducible — re-wrapping THIS
+	// call can't fix it and would only churn). The call's own framing — its
+	// opening and closing lines — is never excluded, so an arg sharing those
+	// lines is still accounted for.
 	type lineRange struct{ lo, hi int }
-	var interior []lineRange
+	var argSpans []lineRange
 	for _, a := range call.Args {
 		s := fset.Position(a.Pos()).Line
 		e := fset.Position(a.End()).Line
-		if e-1 >= s+1 {
-			interior = append(interior, lineRange{s + 1, e - 1})
+		if e > s {
+			argSpans = append(argSpans, lineRange{s, e})
 		}
 	}
-	inInterior := func(ln int) bool {
-		for _, r := range interior {
+	inArgBody := func(ln int) bool {
+		if ln == startLine || ln == endLine {
+			return false
+		}
+		for _, r := range argSpans {
 			if ln >= r.lo && ln <= r.hi {
 				return true
 			}
@@ -541,17 +567,36 @@ func allCallLinesFit(ctx *Context, call *ast.CallExpr, limit, tab int) bool {
 	}
 
 	for ln := startLine; ln <= endLine; ln++ {
-		if inInterior(ln) {
+		if inArgBody(ln) {
 			continue
 		}
 		if ln <= 0 || ln > len(ctx.SourceLines) {
 			return false
 		}
-		if visualWidth(ctx.SourceLines[ln-1], tab) > limit {
+		src := ctx.SourceLines[ln-1]
+		if visualWidth(src, tab) > limit && !hasNolintLL(src) {
 			return false
 		}
 	}
 	return true
+}
+
+// hasNolintLL reports whether a source line carries a "//nolint" directive that
+// disables the line-length linter (bare //nolint or //nolint:...,ll). Such a
+// line is intentionally over-limit, so layout passes must not treat it as an
+// overrun and re-wrap the surrounding construct on its account — that just
+// churns compliant code around an explicitly-exempted line.
+func hasNolintLL(line []byte) bool {
+	i := bytes.Index(line, []byte("//nolint"))
+	if i < 0 {
+		return false
+	}
+	rest := line[i+len("//nolint"):]
+	// Bare "//nolint" (optionally spaced) disables all linters, incl. ll.
+	if len(rest) == 0 || rest[0] != ':' {
+		return true
+	}
+	return bytes.Contains(rest, []byte("ll"))
 }
 
 // isMultiLineAndAllLinesFit reports whether the expression spans multiple

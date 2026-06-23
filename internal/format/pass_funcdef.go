@@ -65,6 +65,19 @@ func (funcDefWrap) Apply(ctx *Context) []diag.Diagnostic {
 			return true
 		}
 
+		// Do no harm: if the signature is already multi-line and re-packing
+		// its parameters cannot bring every line under the limit (the
+		// opening "func Name(" is itself over-limit, or the last line —
+		// always the last param plus the irreducible ") (returns) {" tail —
+		// is over even with that param alone), leave it. Re-packing would
+		// churn the params without fixing the over-limit line; R10 still
+		// reports it.
+		sigMultiLine := ctx.FileSet.Position(astFD.Type.Func).Line !=
+			ctx.FileSet.Position(astFD.Body.Lbrace).Line
+		if sigMultiLine && funcDefUnfixable(ctx, astFD, limit, tab) {
+			return true
+		}
+
 		breaks, multiLine := decideFuncDefLayout(
 			ctx, astFD, fd, limit, tab,
 		)
@@ -72,6 +85,43 @@ func (funcDefWrap) Apply(ctx *Context) []diag.Diagnostic {
 		return true
 	})
 	return nil
+}
+
+// funcDefUnfixable reports whether re-packing the signature's parameters cannot
+// bring every line within the limit, so R3 should leave the (already multi-
+// line) signature alone rather than churn it without fixing the overrun. Two
+// irreducible cases: the opening "func <recv> Name(" already exceeds the limit,
+// or the last line — which always carries the final parameter plus the
+// ") <results> {" tail (R3 never breaks the result list) — is over the limit
+// even with that final parameter alone on it.
+func funcDefUnfixable(ctx *Context, astFD *ast.FuncDecl, limit, tab int) bool {
+	fset := ctx.FileSet
+	lines := ctx.SourceLines
+
+	seedW := sourceWidth(
+		fset, lines, astFD.Type.Func, astFD.Type.Params.Opening+1, tab,
+	)
+	funcCol := visualCol(fset, lines, astFD.Type.Func, tab)
+	if seedW < wideForcedBreak && funcCol+seedW > limit {
+		return true
+	}
+
+	trailingW := sourceWidth(
+		fset, lines, astFD.Type.Params.Closing, astFD.Body.Lbrace+1, tab,
+	)
+	if trailingW >= wideForcedBreak {
+		trailingW = estimateTrailing(astFD)
+	}
+	widths := fieldWidths(fset, lines, astFD.Type.Params.List, tab)
+	if len(widths) == 0 {
+		return false
+	}
+	lastW := widths[len(widths)-1]
+	contIndent := lineIndentAt(fset, lines, astFD.Type.Func, tab) + tab
+	if lastW < wideForcedBreak && contIndent+lastW+trailingW > limit {
+		return true
+	}
+	return false
 }
 
 // sigLinesFit reports whether every source line the function signature occupies

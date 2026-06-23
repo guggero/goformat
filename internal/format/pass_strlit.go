@@ -203,6 +203,26 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 			}
 		}
 
+		// The budget check above approximates the rendered width: it counts
+		// chunk BYTES (over-counting multi-byte runes like an em-dash) and
+		// frames each chunk as `"…" +` with a leading space, which
+		// go/printer actually omits in some contexts. So also treat the
+		// concat as fitting when its CURRENT source lines all fit — lnd
+		// source is gofmt-printed, so those widths are the real rendering.
+		// If R4 moved the concat this pass the source is stale, but the
+		// fixed-point loop re-evaluates next pass.
+		if isConcat && !curChunkingFits {
+			if astN, ok := ctx.Decorator.Ast.Nodes[expr]; ok {
+				if ae, ok := astN.(ast.Expr); ok &&
+					isMultiLineAndAllLinesFit(
+						ctx, ae, limit, tab,
+					) {
+
+					curChunkingFits = true
+				}
+			}
+		}
+
 		// HARD-only by default: when the existing concat already fits on
 		// every line, leave it exactly as the author wrote it. Re-splitting
 		// it (churn, often strictly worse) AND joining/repacking it into
