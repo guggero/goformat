@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 
 	"github.com/dave/dst"
 	"github.com/dave/dst/decorator"
@@ -91,6 +92,7 @@ func formatOnce(src []byte, filename string,
 		StringsToSplit: mapStringSplits(
 			dec, prep.stringsToSplit,
 		),
+		NolintFuncs:  mapFuncDecls(dec, prep.nolintFuncs),
 		OuterHandled: map[*dst.CallExpr]bool{},
 	}
 
@@ -105,10 +107,71 @@ func formatOnce(src []byte, filename string,
 	}
 	out := buf.Bytes()
 
-	diags = append(diags, checkLineLength(filename, out, cfg)...)
+	nolintRanges := nolintOutputRanges(out)
+	diags = append(
+		diags, checkLineLength(filename, out, cfg, nolintRanges)...,
+	)
 
 	return out, diags, nil
 }
+
+// hasNolint reports whether a comment group contains a `//nolint` directive
+// — with or without a space after the slashes, optionally followed by
+// `:rule1,rule2`. This is the function-level formatter opt-out: when set
+// on a FuncDecl's doc comment, EVERY pass leaves the function untouched
+// and R10 suppresses line-length diagnostics for the function's line range.
+func hasNolint(doc *ast.CommentGroup) bool {
+	if doc == nil {
+		return false
+	}
+	for _, c := range doc.List {
+		text := c.Text
+		if !strings.HasPrefix(text, "//") {
+			continue
+		}
+		body := strings.TrimSpace(text[2:])
+		if strings.HasPrefix(body, "nolint") {
+			return true
+		}
+	}
+	return false
+}
+
+// nolintOutputRanges re-parses the rendered output to find FuncDecls whose
+// doc comment carries a `//nolint` directive, and returns their line ranges
+// (inclusive, 1-based, including the doc comment lines). Used by R10 to
+// suppress line-length diagnostics inside nolint-marked functions.
+//
+// We re-parse rather than thread line numbers through the printer: the
+// post-render line range is what R10's line-indexed scan needs, and the
+// output is a real Go file so parsing is cheap and reliable.
+func nolintOutputRanges(src []byte) []lineRange {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
+	if err != nil {
+		return nil
+	}
+	var ranges []lineRange
+	for _, decl := range f.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if !hasNolint(fd.Doc) {
+			continue
+		}
+		start := fset.Position(fd.Pos()).Line
+		if fd.Doc != nil {
+			start = fset.Position(fd.Doc.Pos()).Line
+		}
+		end := fset.Position(fd.End()).Line
+		ranges = append(ranges, lineRange{start, end})
+	}
+	return ranges
+}
+
+// lineRange is an inclusive 1-based line span in the rendered output.
+type lineRange struct{ start, end int }
 
 // prepInfo is the result of source-positional analysis run before dst
 // decoration. Some signals (line widths, original sig spread) need accurate
@@ -116,6 +179,7 @@ func formatOnce(src []byte, filename string,
 type prepInfo struct {
 	multilineSigs  map[*ast.FuncDecl]struct{}
 	stringsToSplit map[*ast.BasicLit]stringSplit
+	nolintFuncs    map[*ast.FuncDecl]struct{}
 	sourceLines    [][]byte
 }
 
@@ -146,12 +210,16 @@ func analyse(fset *token.FileSet, f *ast.File, src []byte,
 	prep := prepInfo{
 		multilineSigs:  map[*ast.FuncDecl]struct{}{},
 		stringsToSplit: map[*ast.BasicLit]stringSplit{},
+		nolintFuncs:    map[*ast.FuncDecl]struct{}{},
 		sourceLines:    lines,
 	}
 
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
+			if hasNolint(x.Doc) {
+				prep.nolintFuncs[x] = struct{}{}
+			}
 			if x.Body == nil || x.Type == nil {
 				return true
 			}

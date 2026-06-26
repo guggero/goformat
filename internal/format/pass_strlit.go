@@ -61,6 +61,9 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 
 	dstutil.Apply(ctx.File, func(c *dstutil.Cursor) bool {
 		node := c.Node()
+		if ctx.SkipNolintDecl(node) {
+			return false
+		}
 		expr, ok := node.(dst.Expr)
 		if !ok || !isStringExpr(expr) {
 			return true
@@ -76,11 +79,11 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 
 			// Import-path and struct-tag strings live in concrete
 			// *dst.BasicLit slots (ImportSpec.Path / Field.Tag), so
-			// replacing them with a "+"-chain (*dst.BinaryExpr) would
-			// panic in dstutil.Apply's reflect.Set. They must never be
-			// split anyway: an import path can't wrap and splitting a
-			// struct tag changes its value. lnd's own `ll` linter also
-			// exempts imports.
+			// replacing them with a "+"-chain (*dst.BinaryExpr)
+			// would panic in dstutil.Apply's reflect.Set. They must
+			// never be split anyway: an import path can't wrap and
+			// splitting a struct tag changes its value. lnd's own
+			// `ll` linter also exempts imports.
 			switch p.(type) {
 			case *dst.ImportSpec, *dst.Field:
 				return true
@@ -108,12 +111,15 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 					)
 				}
 			}
+
 			// An existing concat inside a layout-fragile parent
 			// (a keyed entry of a CompositeLit) is left alone
 			// when every source line already fits: rejoining can
 			// push the line over the limit via gofmt's alignment
 			// padding, and the next run re-splits — oscillation.
-			if srcAllFits && insideLayoutFragileParent(parents, expr) {
+			if srcAllFits &&
+				insideLayoutFragileParent(parents, expr) {
+
 				return true
 			}
 		} else {
@@ -148,14 +154,15 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 		}
 		srcQuoteCol, srcLineIndent := sourcePosOfLit(ctx, leftmost, tab)
 
-		// Compute the string's FINAL rendered first-line indent. When the
-		// string sits inside wrapped ancestors, its indent is
+		// Compute the string's FINAL rendered first-line indent. When
+		// the string sits inside wrapped ancestors, its indent is
 		// (outermost-wrapped-ancestor start-line indent) + wraps*tab.
 		// Using the ancestor's start line — not the string's own source
-		// line — is what avoids the double-count when the call was ALREADY
-		// wrapped in the source (where srcLineIndent already includes the
-		// wrap indent and adding wraps*tab over-counts, producing a too-
-		// tight budget that needlessly re-splits a fitting concat).
+		// line — is what avoids the double-count when the call was
+		// ALREADY wrapped in the source (where srcLineIndent already
+		// includes the wrap indent and adding wraps*tab over-counts,
+		// producing a too- tight budget that needlessly re-splits a
+		// fitting concat).
 		wraps, baseIndent := wrapGeometry(ctx, node, parents, tab)
 		var firstQuoteCol, firstLineIndent int
 		if wraps > 0 {
@@ -182,10 +189,11 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 		}
 
 		// Does the EXISTING concat chunking already fit at the FINAL
-		// (post-R4-wrap) geometry, one chunk per line? The budgets above
-		// already reflect the wrap state, so this is the test that
-		// matters — not whether the original source lines fit (they may
-		// have sat at a shallower indent before R4 wrapped the call).
+		// (post-R4-wrap) geometry, one chunk per line? The budgets
+		// above already reflect the wrap state, so this is the test
+		// that matters — not whether the original source lines fit
+		// (they may have sat at a shallower indent before R4 wrapped
+		// the call).
 		curChunkingFits := isConcat && len(chunks) > 1
 		if curChunkingFits {
 			for i, ch := range chunks {
@@ -193,6 +201,7 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 				switch {
 				case i == 0:
 					budget = firstNonLast
+
 				case i == len(chunks)-1:
 					budget = contLast
 				}
@@ -203,14 +212,15 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 			}
 		}
 
-		// The budget check above approximates the rendered width: it counts
-		// chunk BYTES (over-counting multi-byte runes like an em-dash) and
-		// frames each chunk as `"…" +` with a leading space, which
-		// go/printer actually omits in some contexts. So also treat the
-		// concat as fitting when its CURRENT source lines all fit — lnd
-		// source is gofmt-printed, so those widths are the real rendering.
-		// If R4 moved the concat this pass the source is stale, but the
-		// fixed-point loop re-evaluates next pass.
+		// The budget check above approximates the rendered width: it
+		// counts chunk BYTES (over-counting multi-byte runes like an
+		// em-dash) and frames each chunk as `"…" +` with a leading
+		// space, which go/printer actually omits in some contexts. So
+		// also treat the concat as fitting when its CURRENT source
+		// lines all fit — lnd source is gofmt-printed, so those widths
+		// are the real rendering. If R4 moved the concat this pass the
+		// source is stale, but the fixed-point loop re-evaluates next
+		// pass.
 		if isConcat && !curChunkingFits {
 			if astN, ok := ctx.Decorator.Ast.Nodes[expr]; ok {
 				if ae, ok := astN.(ast.Expr); ok &&
@@ -223,11 +233,12 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 			}
 		}
 
-		// HARD-only by default: when the existing concat already fits on
-		// every line, leave it exactly as the author wrote it. Re-splitting
-		// it (churn, often strictly worse) AND joining/repacking it into
-		// fewer chunks are both SOFT, space-efficiency changes — only
-		// --optimize reflows a concat that already complies.
+		// HARD-only by default: when the existing concat already fits
+		// on every line, leave it exactly as the author wrote it.
+		// Re-splitting it (churn, often strictly worse) AND
+		// joining/repacking it into fewer chunks are both SOFT,
+		// space-efficiency changes — only --optimize reflows a concat
+		// that already complies.
 		if curChunkingFits && !ctx.Config.Optimize {
 			return true
 		}

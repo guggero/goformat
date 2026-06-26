@@ -46,6 +46,9 @@ func (varBlockWrap) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		gd, ok := n.(*dst.GenDecl)
 		if !ok || gd.Tok != token.VAR || gd.Lparen {
 			return true

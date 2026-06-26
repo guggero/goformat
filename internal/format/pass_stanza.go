@@ -24,6 +24,9 @@ func (stanzaSpacing) Apply(ctx *Context) []diag.Diagnostic {
 		return nil
 	}
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		block, ok := n.(*dst.BlockStmt)
 		if !ok || len(block.List) < 2 {
 			return true

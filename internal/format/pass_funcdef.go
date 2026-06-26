@@ -36,6 +36,9 @@ func (funcDefWrap) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		fd, ok := n.(*dst.FuncDecl)
 		if !ok {
 			return true
@@ -56,22 +59,22 @@ func (funcDefWrap) Apply(ctx *Context) []diag.Diagnostic {
 		}
 
 		// HARD-only by default: a signature is re-wrapped solely to
-		// resolve an over-limit line. If every line the signature occupies
-		// already fits, the author's layout is valid — leave it. Repacking
-		// or collapsing a fitting signature is a SOFT, --optimize-only
-		// change. (R2's body-blank still works: MultilineSigs is seeded
-		// from the source state in analyse().)
+		// resolve an over-limit line. If every line the signature
+		// occupies already fits, the author's layout is valid — leave
+		// it. Repacking or collapsing a fitting signature is a SOFT,
+		// --optimize-only change. (R2's body-blank still works:
+		// MultilineSigs is seeded from the source state in analyse().)
 		if !ctx.Config.Optimize && sigLinesFit(ctx, astFD, limit, tab) {
 			return true
 		}
 
-		// Do no harm: if the signature is already multi-line and re-packing
-		// its parameters cannot bring every line under the limit (the
-		// opening "func Name(" is itself over-limit, or the last line —
-		// always the last param plus the irreducible ") (returns) {" tail —
-		// is over even with that param alone), leave it. Re-packing would
-		// churn the params without fixing the over-limit line; R10 still
-		// reports it.
+		// Do no harm: if the signature is already multi-line and
+		// re-packing its parameters cannot bring every line under the
+		// limit (the opening "func Name(" is itself over-limit, or the
+		// last line — always the last param plus the irreducible ")
+		// (returns) {" tail — is over even with that param alone),
+		// leave it. Re-packing would churn the params without fixing
+		// the over-limit line; R10 still reports it.
 		sigMultiLine := ctx.FileSet.Position(astFD.Type.Func).Line !=
 			ctx.FileSet.Position(astFD.Body.Lbrace).Line
 		if sigMultiLine && funcDefUnfixable(ctx, astFD, limit, tab) {
@@ -107,7 +110,8 @@ func funcDefUnfixable(ctx *Context, astFD *ast.FuncDecl, limit, tab int) bool {
 	}
 
 	trailingW := sourceWidth(
-		fset, lines, astFD.Type.Params.Closing, astFD.Body.Lbrace+1, tab,
+		fset, lines, astFD.Type.Params.Closing, astFD.Body.Lbrace+1,
+		tab,
 	)
 	if trailingW >= wideForcedBreak {
 		trailingW = estimateTrailing(astFD)

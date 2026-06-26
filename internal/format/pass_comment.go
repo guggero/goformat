@@ -35,6 +35,9 @@ func (commentReflow) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		if n == nil {
 			return true
 		}
@@ -196,8 +199,8 @@ func isParagraphBreaker(entry string) bool {
 	// Indented continuation (extra leading spaces OR a leading tab) — code,
 	// an ASCII diagram, or a list continuation. These are preformatted, so
 	// leave the line exactly as-is. Tab-indented comment bodies ("//\t…",
-	// common for lnd's storage-hierarchy diagrams) must be matched here too,
-	// otherwise they get normalized to "// \t…" and the art shifts.
+	// common for lnd's storage-hierarchy diagrams) must be matched here
+	// too, otherwise they get normalized to "// \t…" and the art shifts.
 	if strings.HasPrefix(body, "  ") || strings.HasPrefix(body, "\t") {
 		return true
 	}

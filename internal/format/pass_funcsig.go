@@ -28,6 +28,9 @@ func (funcSignatureBodyBlank) Apply(ctx *Context) []diag.Diagnostic {
 		return nil
 	}
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		switch s := n.(type) {
 		case *dst.FuncDecl:
 			if s.Body == nil || len(s.Body.List) == 0 {

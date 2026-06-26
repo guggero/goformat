@@ -17,6 +17,9 @@ func (switchCaseSpacing) Apply(ctx *Context) []diag.Diagnostic {
 		return nil
 	}
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		switch s := n.(type) {
 		case *dst.SwitchStmt:
 			spaceClauses(s.Body.List)

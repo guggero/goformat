@@ -55,6 +55,30 @@ type Context struct {
 	// wrong after an outer wrap moves the call to a new column — so the
 	// inner call must be skipped to avoid over-wrapping.
 	OuterHandled map[*dst.CallExpr]bool
+
+	// NolintFuncs records FuncDecls whose doc comment contains a `//nolint`
+	// directive (with or without a leading space; optional `:rule1,rule2`
+	// suffix). Every mutation pass uses ctx.SkipNolintDecl at the entry of
+	// its dst.Inspect callback so the entire function — signature, body,
+	// and every nested construct — is left untouched. R10 (line-length
+	// check) honours the same set by suppressing diagnostics for the
+	// function's line range in the rendered output.
+	NolintFuncs map[*dst.FuncDecl]bool
+}
+
+// SkipNolintDecl is the standard early-skip helper for every mutation pass:
+// when n is a FuncDecl in ctx.NolintFuncs, return false from dst.Inspect /
+// dstutil.Apply to block descent into the function entirely. Returning
+// false at the FuncDecl node is sufficient — depth-first traversal visits
+// the FuncDecl before any descendant, so a single guard at the top of each
+// pass's walker covers every nested construct inside the function.
+func (ctx *Context) SkipNolintDecl(n dst.Node) bool {
+	if fd, ok := n.(*dst.FuncDecl); ok {
+		if ctx.NolintFuncs[fd] {
+			return true
+		}
+	}
+	return false
 }
 
 // pipeline is the ordered list of AST passes. R10 is a post-render check

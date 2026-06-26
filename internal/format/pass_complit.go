@@ -39,6 +39,9 @@ func (compositeLitReflow) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		comp, ok := n.(*dst.CompositeLit)
 		if !ok || len(comp.Elts) == 0 {
 			return true

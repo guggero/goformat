@@ -36,6 +36,9 @@ func (bodySplit) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
+		if ctx.SkipNolintDecl(n) {
+			return false
+		}
 		switch fn := n.(type) {
 		case *dst.FuncDecl:
 			astN, ok := ctx.Decorator.Ast.Nodes[fn]

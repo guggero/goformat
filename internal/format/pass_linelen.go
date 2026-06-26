@@ -17,11 +17,15 @@ import (
 //
 // Exemptions implemented here:
 //   - `//nolint:ll` anywhere on the line
+//   - the line falls inside a nolintRange — the inclusive [start, end] line
+//     span of a FuncDecl whose doc comment carried a `//nolint` directive.
+//     Function-level nolint disables every check inside the function, not
+//     just per-line `//nolint:ll`.
 //
 // Future exemptions (raw strings, URLs in comments, structured-log key-value
 // sections) attach in later phases when the rules that need them land.
 func checkLineLength(filename string, src []byte,
-	cfg *config.Config) []diag.Diagnostic {
+	cfg *config.Config, nolintRanges []lineRange) []diag.Diagnostic {
 
 	if cfg.LineLength <= 0 {
 		return nil
@@ -35,7 +39,9 @@ func checkLineLength(filename string, src []byte,
 	lineNo := 1
 	for _, line := range splitLines(src) {
 		width := visualWidth(line, tab)
-		if width > cfg.LineLength && !isExempt(line) {
+		if width > cfg.LineLength && !isExempt(line) &&
+			!inAnyRange(lineNo, nolintRanges) {
+
 			diags = append(diags, diag.Diagnostic{
 				Rule:     "R10",
 				Severity: diag.Warn,
@@ -51,6 +57,17 @@ func checkLineLength(filename string, src []byte,
 		lineNo++
 	}
 	return diags
+}
+
+// inAnyRange reports whether lineNo falls within any of the inclusive
+// 1-based ranges.
+func inAnyRange(lineNo int, ranges []lineRange) bool {
+	for _, r := range ranges {
+		if lineNo >= r.start && lineNo <= r.end {
+			return true
+		}
+	}
+	return false
 }
 
 func isExempt(line []byte) bool {
