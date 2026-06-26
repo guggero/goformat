@@ -303,6 +303,21 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 			postLine += 1 // outer ")"
 
 			if preLine <= limit && postLine <= limit {
+				// Re-pack the container's inner content. Its
+				// layout may be stale (e.g. each arg on its
+				// own line from a prior R4 pack-form layout)
+				// where greedy packing now fits more args per
+				// line. promoteToMultiline is the right hammer:
+				// it stamps the same Before/After NewLine
+				// pattern with packLayout-driven inner breaks,
+				// matching what R4 / R7 would produce on a
+				// fresh single-line input.
+				promoteToMultiline(
+					call.Args[containerIdx],
+					astCall.Args[containerIdx],
+					postIndent+tab, limit,
+					fset, lines, tab,
+				)
 				return layoutSymmetric, nil
 			}
 		}
@@ -363,7 +378,11 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 						limit, fset, lines, tab,
 					) {
 
-					promoteToMultiline(cand)
+					promoteToMultiline(
+						cand, astCand,
+						postIndent+tab, limit,
+						fset, lines, tab,
+					)
 					return layoutSymmetric, nil
 				}
 			}
@@ -506,34 +525,71 @@ func promotedContainerFits(expr ast.Expr, contIndent, limit int,
 	return false
 }
 
-// promoteToMultiline marks a single-line container as multi-line by
-// stamping NewLine decorations on its inner elements. For each inner arg /
-// elt: Before=NewLine puts it on a continuation line; After=NewLine on the
-// LAST inner stamps a trailing comma + newline before the close, so the
-// container's close token can ride the same line as the outer call's
-// closing ")" (the symmetric-form ").." pattern).
-func promoteToMultiline(expr dst.Expr) {
-	switch x := expr.(type) {
+// promoteToMultiline turns a single-line container into a multi-line one
+// for R6's symmetric layout. The inner content is laid out the same way
+// R4 / R7 would lay it out on its own — packed onto continuation lines
+// for call args and non-keyed (slice) composites, one element per line
+// for keyed (struct / map) composites — so the result reads as the
+// container's "own" multi-line form, just opened from the outer call's
+// arg line. The last inner element gets After=NewLine so the container's
+// close token rides the outer call's closing ")" on a shared line (the
+// "})" / "))" pattern).
+func promoteToMultiline(cand dst.Expr, astCand ast.Expr,
+	contIndent, limit int, fset *token.FileSet, lines [][]byte, tab int) {
+
+	switch x := cand.(type) {
 	case *dst.CallExpr:
-		if len(x.Args) == 0 {
+		ac, ok := astCand.(*ast.CallExpr)
+		if !ok || len(x.Args) == 0 {
 			return
 		}
-		for _, a := range x.Args {
-			a.Decorations().Before = dst.NewLine
+		widths := argWidths(fset, lines, ac.Args, tab)
+		contBudget := limit - contIndent
+		breaks := packLayout(widths, contBudget, contBudget, 1)
+		clearArgDecorations(x.Args)
+		x.Args[0].Decorations().Before = dst.NewLine
+		for _, i := range breaks {
+			if i >= 0 && i < len(x.Args) {
+				x.Args[i].Decorations().Before = dst.NewLine
+			}
 		}
 		x.Args[len(x.Args)-1].Decorations().After = dst.NewLine
 
 	case *dst.CompositeLit:
-		if len(x.Elts) == 0 {
+		ac, ok := astCand.(*ast.CompositeLit)
+		if !ok || len(x.Elts) == 0 {
 			return
 		}
-		for _, e := range x.Elts {
-			e.Decorations().Before = dst.NewLine
+		if isKeyedComposite(x) {
+			// Struct / map: one field per line (R7 convention —
+			// packed struct fields ruin git-diff hygiene).
+			for _, e := range x.Elts {
+				e.Decorations().Before = dst.NewLine
+			}
+			x.Elts[len(x.Elts)-1].Decorations().After = dst.NewLine
+			return
+		}
+		// Slice / array: greedy pack like R7's applySliceReflow.
+		widths := argWidths(fset, lines, ac.Elts, tab)
+		contBudget := limit - contIndent
+		breaks := packLayout(widths, contBudget, contBudget, 1)
+		clearArgDecorations(x.Elts)
+		x.Elts[0].Decorations().Before = dst.NewLine
+		for _, i := range breaks {
+			if i >= 0 && i < len(x.Elts) {
+				x.Elts[i].Decorations().Before = dst.NewLine
+			}
 		}
 		x.Elts[len(x.Elts)-1].Decorations().After = dst.NewLine
 
 	case *dst.UnaryExpr:
-		promoteToMultiline(x.X)
+		au, ok := astCand.(*ast.UnaryExpr)
+		if !ok {
+			return
+		}
+		promoteToMultiline(
+			x.X, au.X, contIndent, limit, fset, lines, tab,
+		)
 	}
 }
 

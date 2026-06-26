@@ -179,30 +179,25 @@ func (binaryOpWrap) Apply(ctx *Context) []diag.Diagnostic {
 			)
 		}
 
-		// Find the smallest k such that all post-split lines fit.
-		// k=0 = single joined line; k=N = every operator broken.
-		fitK := -1
-		for k := 0; k <= N; k++ {
-			if binaryLinesFit(
-				operandW, k, renderedIndent, contIndent,
-				prefixW, opW, suffixW, limit,
-			) {
-
-				fitK = k
-				break
-			}
-		}
-
-		if fitK < 0 {
-			// No k brings every line under the limit (some
-			// individual operand already exceeds it). Clear any
-			// stale operator breaks and let R4 wrap inner calls.
-			applyChainSplits(dstChain, 0)
+		// Greedy-pack operands across continuation lines, preferring
+		// fewer lines. The "always-one-per-line" form is wrong when
+		// short trailing operands could ride a previous continuation:
+		// `1 + 1 + len(x) + len(y) + 32 + len(z) + 32` should break
+		// to two lines, not three.
+		breaks, ok := packBinaryChain(
+			operandW, renderedIndent+prefixW,
+			contIndent, opW, suffixW, limit,
+		)
+		if !ok {
+			// Some operand alone exceeds its line budget; no
+			// operator break helps. Clear any stale breaks and
+			// let R4 wrap inner calls instead.
+			applyChainBreaks(dstChain, nil)
 			return true
 		}
 
-		applyChainSplits(dstChain, fitK)
-		if fitK > 0 {
+		applyChainBreaks(dstChain, breaks)
+		if len(breaks) > 0 {
 			// At least one operator broken — keep operand calls
 			// off R4's hands (their source positions are no
 			// longer authoritative for layout decisions).
@@ -241,11 +236,99 @@ func collectBinaryChain(bin *dst.BinaryExpr,
 	return dstChain, astChain
 }
 
+// packBinaryChain greedily packs operands across continuation lines and
+// returns the list of operand indices (1..N) before which a line break is
+// inserted. It always reserves room on each non-last line for a trailing
+// " op" (so the line can validly close on a break point); the last line
+// reserves suffixW instead. Returns (nil, false) when no packing makes
+// every line fit — typically an operand alone exceeds its line budget,
+// in which case operator breaks can't help and R4 should wrap inner
+// calls.
+//
+// The classic illustration of why greedy packing matters: for
+// `1 + 1 + len(x) + len(y) + 32 + len(z) + 32` we want
+//
+//	1 + 1 + len(x) + len(y) + 32 +
+//	    len(z) + 32
+//
+// not
+//
+//	1 + 1 + len(x) + len(y) + 32 +
+//	    len(z) +
+//	    32
+//
+// The trailing `32` is short enough to ride line 2's continuation; an
+// "always one operand per line" policy would split it off unnecessarily.
+func packBinaryChain(operandW []int,
+	firstLineStart, contLineStart, opW, suffixW, limit int) ([]int, bool) {
+
+	N := len(operandW) - 1 // number of operators
+	if N < 1 {
+		return nil, true
+	}
+
+	var breaks []int
+	curWidth := firstLineStart + operandW[0]
+	for i := 1; i <= N; i++ {
+		isLast := i == N
+
+		// Cost of appending " op " + operand[i] to the current line.
+		addW := opW + 2 + operandW[i]
+
+		// Reserved ending: " op" on a non-last line (in case the
+		// NEXT operand has to break, leaving this operand last on
+		// the line); suffix on the last line.
+		endingW := opW + 1
+		if isLast {
+			endingW = suffixW
+		}
+
+		if curWidth+addW+endingW <= limit {
+			curWidth += addW
+			continue
+		}
+
+		// Doesn't fit — break BEFORE operand[i]. The current line
+		// ends with the trailing " op" (already budgeted).
+		breaks = append(breaks, i)
+		curWidth = contLineStart + operandW[i]
+		if curWidth+endingW > limit {
+			// Operand[i] alone wouldn't even fit on its own
+			// line with the required ending. Greedy can't
+			// succeed.
+			return nil, false
+		}
+	}
+	return breaks, true
+}
+
+// applyChainBreaks sets dst.NewLine on the Y operand of every chain
+// element identified by an operand index in breaks, and clears the
+// rest. Chain indexing inverts operand order — for N+1 operands, chain
+// element c.Y holds operand index (N-c), so a break before operand i
+// becomes a NewLine on dstChain[N-i].Y.
+func applyChainBreaks(dstChain []*dst.BinaryExpr, breaks []int) {
+	N := len(dstChain)
+	want := make(map[int]bool, len(breaks))
+	for _, b := range breaks {
+		idx := N - b
+		if idx >= 0 && idx < N {
+			want[idx] = true
+		}
+	}
+	for i, bin := range dstChain {
+		if want[i] {
+			bin.Y.Decorations().Before = dst.NewLine
+		} else {
+			clearOpBreak(bin)
+		}
+	}
+}
+
 // binaryLinesFit reports whether splitting the chain at its LAST k operators
-// produces lines that all fit within limit. With operandW indexed in source
-// order (0..N), k splits put operands[0..N-k] on line 1 (with the kth-to-
-// last operator trailing at end-of-line if k>0) and each remaining operand
-// on its own continuation line. For k=0 everything packs onto one line.
+// produces lines that all fit within limit. Retained for any callers that
+// still want the k-based view; the active R16 logic uses packBinaryChain
+// instead, which can pack multiple operands per continuation line.
 func binaryLinesFit(operandW []int,
 	k, renderedIndent, contIndent,
 	prefixW, opW, suffixW, limit int) bool {
