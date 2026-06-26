@@ -201,6 +201,17 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		case layoutPack:
 			applyCallLayout(call, breaks, true)
 			markInnerCallsHandled(ctx.OuterHandled, call)
+
+		case layoutPreserve:
+			// Source already uses a valid symmetric / wrapped-
+			// symmetric layout with a multi-line container arg
+			// and all lines fit. Don't touch outer decorations —
+			// the existing layout is the doc's preferred shape.
+			// Mark inner calls so R4 doesn't descend and undo
+			// inner layouts whose positions are interpreted in
+			// the same way (each inner is its own preserve/pack
+			// decision, no nested chaos).
+			markInnerCallsHandled(ctx.OuterHandled, call)
 		}
 		return true
 	})
@@ -214,6 +225,7 @@ const (
 	layoutCollapse  layoutKind = iota // single-line fits the limit
 	layoutSymmetric                   // last arg is a multi-line container; outer args inline
 	layoutPack                        // every arg on its own continuation line, ')' on own line
+	layoutPreserve                    // source layout is symmetric-form and fits; leave alone
 )
 
 func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
@@ -358,6 +370,33 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 		}
 	}
 
+	// 2c. SYMMETRY LAW: canonical symmetric (step 2) and last-arg
+	//     promotion (step 2b) both failed — most commonly because the
+	//     closing line wouldn't fit when the call has trailing args
+	//     after the container. In that case, if the SOURCE already
+	//     has a valid multi-line layout with a multi-line container
+	//     arg and every line fits, preserve it. The doc puts symmetry
+	//     above argument repack, so the "wrapped-symmetric / middle-
+	//     container" form gofmt naturally produces here:
+	//
+	//         backendCall(
+	//             t, &Req{
+	//                 ...
+	//             }, &Resp{},
+	//             fn, shortTimeout,
+	//         )
+	//
+	//     must win over R4's verbose one-arg-per-line pack. Without
+	//     this gate, --optimize would erase the wrapped symmetric form
+	//     in favour of a strictly worse pack layout.
+	if hasMultiLineContainerArg(call) &&
+		allCallLinesFit(ctx, astCall, limit, tab) &&
+		fset.Position(astCall.Pos()).Line !=
+			fset.Position(astCall.End()).Line {
+
+		return layoutPreserve, nil
+	}
+
 	// 3. Fall back to packed verbose layout. If the last arg is itself
 	//    a multi-line container, swap its (effectively-infinite) width
 	//    for its open-token width so the packer can correctly evaluate
@@ -380,6 +419,19 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 	contBudget := limit - contIndent
 	breaks := packLayout(widths, contBudget, contBudget, 1)
 	return layoutPack, breaks
+}
+
+// hasMultiLineContainerArg reports whether any arg of call is a multi-line
+// container (composite literal, closure, nested call, or &Composite). Used
+// by R4 to short-circuit on layouts the doc's symmetry law requires us to
+// preserve — see the call-site comment for the "symmetry law" rationale.
+func hasMultiLineContainerArg(call *dst.CallExpr) bool {
+	for _, arg := range call.Args {
+		if isMultiLineContainer(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // promotableContainer reports whether expr is a single-line call / composite
