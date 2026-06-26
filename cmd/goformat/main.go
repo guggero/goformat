@@ -25,6 +25,23 @@ Modes (exclusive; default: -d):
   -l              list files that would change
   -check          exit non-zero if any changes needed
 
+Options:
+  -optimize       also apply soft, space-efficiency fixes to code that already
+                  fits
+  -exclude PAT    skip dirs/files matching PAT when walking a directory
+                  (repeatable; comma-separated values supported). Appends to
+                  any 'exclude' list in goformat.toml. PAT is matched against
+                  the basename, the path relative to the walked root, or as a
+                  leading path segment of the relative path. Glob metachars
+                  (*, ?, [...]) are honoured. Matched directories are skipped
+                  entirely (including their descendants). Examples:
+                    -exclude testdata           (basename match)
+                    -exclude '*.gen.go'         (glob on filename)
+                    -exclude internal/legacy    (subtree prune)
+                    -exclude vendor,third_party (multiple in one flag)
+                  Defaults already skip vendor, testdata, dot- and underscore-
+                  prefixed directories.
+
 Config:
   -config FILE    explicit config file (else search upward for goformat.toml)
   -no-config      ignore config files, use defaults
@@ -87,6 +104,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			"optimize", false, "also apply soft, space-efficiency "+
 				"fixes to code that already fits",
 		)
+		excludes excludeFlag
+	)
+	fset.Var(
+		&excludes, "exclude",
+		"path patterns to skip when walking a directory (repeatable, "+
+			"comma-separated; matched against basename, relative path, "+
+			"or leading path segment; supports *, ?, [...])",
 	)
 	if err := fset.Parse(args); err != nil {
 		return err
@@ -114,6 +138,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if *optimize {
 		cfg.Optimize = true
 	}
+	cfg.Exclude = append(cfg.Exclude, excludes...)
 
 	paths := fset.Args()
 	if len(paths) == 0 {
@@ -274,9 +299,18 @@ func processDir(root string, m mode, cfg *config.Config,
 
 					return filepath.SkipDir
 				}
+				if matchExclude(cfg.Exclude, root, path, name) {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !strings.HasSuffix(d.Name(), ".go") {
+				return nil
+			}
+			if matchExclude(
+				cfg.Exclude, root, path, d.Name(),
+			) {
+
 				return nil
 			}
 			changed, err := processFile(path, m, cfg, stdout)
@@ -288,6 +322,58 @@ func processDir(root string, m mode, cfg *config.Config,
 		},
 	)
 	return anyChanged, err
+}
+
+// matchExclude reports whether the entry at path (under root) matches any
+// of the user-supplied exclude patterns. A pattern matches when ANY of:
+//   - filepath.Match against the basename
+//   - filepath.Match against the relative path (root → path)
+//   - the relative path equals the pattern (literal match) or has the
+//     pattern as a leading path segment ("internal/legacy" matches
+//     "internal/legacy" and any "internal/legacy/..." descendant)
+//
+// Path separators in patterns are normalised to the OS separator so a
+// user-written "internal/foo" works on Windows too.
+func matchExclude(patterns []string, root, path, basename string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = basename
+	}
+	sep := string(filepath.Separator)
+	for _, p := range patterns {
+		p = filepath.FromSlash(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if ok, _ := filepath.Match(p, basename); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(p, rel); ok {
+			return true
+		}
+		if rel == p || strings.HasPrefix(rel, p+sep) {
+			return true
+		}
+	}
+	return false
+}
+
+// excludeFlag is a repeatable, comma-aware string-slice flag. Each call to
+// Set splits the value on commas, trims whitespace, and appends non-empty
+// segments. Repeating `-exclude` accumulates; using a single
+// `-exclude vendor,testdata` does the same in one shot.
+type excludeFlag []string
+
+func (e *excludeFlag) String() string { return strings.Join(*e, ",") }
+
+func (e *excludeFlag) Set(v string) error {
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*e = append(*e, part)
+		}
+	}
+	return nil
 }
 
 func hasFlag(args []string, names ...string) bool {

@@ -38,6 +38,20 @@ type Config struct {
 	// InfoS, WarnS, ErrorS, CriticalS.
 	StructuredLogMethods []string `toml:"structured_log_methods"`
 
+	// Exclude lists path patterns to skip when walking a directory
+	// argument. A pattern matches when ANY of the following is true:
+	//   - filepath.Match against the entry's basename
+	//   - filepath.Match against the entry's path relative to the
+	//     walked root
+	//   - the relative path equals the pattern, or has the pattern as
+	//     a leading path segment ("internal/foo" matches
+	//     "internal/foo" and "internal/foo/sub/bar.go")
+	// Matched directories are pruned via filepath.SkipDir, so their
+	// descendants aren't visited. The CLI's -exclude flag appends to
+	// this list. Defaults still skip vendor, testdata, dot- and
+	// underscore-prefixed dirs.
+	Exclude []string `toml:"exclude"`
+
 	Rules Rules `toml:"rules"`
 }
 
