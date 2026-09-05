@@ -331,13 +331,20 @@ func processChangedPaths(paths []string, uncommitted bool, m mode,
 					name,
 				)
 			}
+			reported, err := reportChangedRuleDiagnostics(
+				baseline, out, name, cfg, stderr,
+			)
+			if err != nil {
+				return err
+			}
 			changed, err := outputFile(
 				path, name, src, out, m, stdout,
 			)
 			if err != nil {
 				return err
 			}
-			anyChanged = anyChanged || changed || skipped
+			anyChanged = anyChanged || changed || skipped ||
+				reported
 		}
 	}
 	if m == modeCheck && anyChanged {

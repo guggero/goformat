@@ -27,6 +27,8 @@ Modes (exclusive; default: -d):
   -check          exit non-zero if any changes needed
 
 Options:
+  -rule RULES     enable only these rules, overriding config rule toggles
+                  (repeatable; comma-separated IDs, e.g. -rule R3,R4)
   -optimize       also apply soft, space-efficiency fixes to code that already
                   fits
   -uncommitted-only
@@ -126,7 +128,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			"format only working-tree hunks changed relative to "+
 				"the index",
 		)
-		excludes excludeFlag
+		excludes      excludeFlag
+		selectedRules ruleFlag
+	)
+	fset.Var(
+		&selectedRules, "rule",
+		"only run these rule IDs (repeatable, comma-separated)",
 	)
 	fset.Var(
 		&excludes, "exclude",
@@ -167,6 +174,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if *optimize {
 		cfg.Optimize = true
 	}
+	if selectedRules != nil {
+		if err := cfg.SelectRules(selectedRules); err != nil {
+			return err
+		}
+	}
 	cfg.Exclude = append(cfg.Exclude, excludes...)
 
 	paths := fset.Args()
@@ -181,7 +193,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	anyChanged := false
 	for _, p := range paths {
-		changed, err := processPath(p, m, cfg, stdin, stdout)
+		changed, err := processPath(p, m, cfg, stdin, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -233,33 +245,34 @@ func resolveConfig(cfgPath string, noConfig bool) (*config.Config, error) {
 }
 
 func processPath(p string, m mode, cfg *config.Config, stdin io.Reader,
-	stdout io.Writer) (bool, error) {
+	stdout, stderr io.Writer) (bool, error) {
 
 	if p == "-" {
-		return processStdin(m, cfg, stdin, stdout)
+		return processStdin(m, cfg, stdin, stdout, stderr)
 	}
 	info, err := os.Stat(p)
 	if err != nil {
 		return false, err
 	}
 	if !info.IsDir() {
-		return processFile(p, m, cfg, stdout)
+		return processFile(p, m, cfg, stdout, stderr)
 	}
-	return processDir(p, m, cfg, stdout)
+	return processDir(p, m, cfg, stdout, stderr)
 }
 
 func processStdin(m mode, cfg *config.Config, stdin io.Reader,
-	stdout io.Writer) (bool, error) {
+	stdout, stderr io.Writer) (bool, error) {
 
 	src, err := io.ReadAll(stdin)
 	if err != nil {
 		return false, err
 	}
-	out, _, err := format.Format(src, "<stdin>", cfg)
+	out, diagnostics, err := format.Format(src, "<stdin>", cfg)
 	if err != nil {
 		return false, err
 	}
-	changed := !bytes.Equal(src, out)
+	reported := reportRuleDiagnostics(diagnostics, cfg, stderr, nil)
+	changed := !bytes.Equal(src, out) || (m == modeCheck && reported)
 	switch m {
 	case modeWrite:
 		_, werr := stdout.Write(out)
@@ -284,17 +297,19 @@ func processStdin(m mode, cfg *config.Config, stdin io.Reader,
 }
 
 func processFile(path string, m mode, cfg *config.Config,
-	stdout io.Writer) (bool, error) {
+	stdout, stderr io.Writer) (bool, error) {
 
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
 	}
-	out, _, err := format.Format(src, path, cfg)
+	out, diagnostics, err := format.Format(src, path, cfg)
 	if err != nil {
 		return false, err
 	}
-	return outputFile(path, path, src, out, m, stdout)
+	reported := reportRuleDiagnostics(diagnostics, cfg, stderr, nil)
+	changed, err := outputFile(path, path, src, out, m, stdout)
+	return changed || (m == modeCheck && reported), err
 }
 
 func outputFile(path, name string, src, out []byte, m mode,
@@ -328,7 +343,7 @@ func outputFile(path, name string, src, out []byte, m mode,
 }
 
 func processDir(root string, m mode, cfg *config.Config,
-	stdout io.Writer) (bool, error) {
+	stdout, stderr io.Writer) (bool, error) {
 
 	anyChanged := false
 	err := filepath.WalkDir(
@@ -361,7 +376,9 @@ func processDir(root string, m mode, cfg *config.Config,
 
 				return nil
 			}
-			changed, err := processFile(path, m, cfg, stdout)
+			changed, err := processFile(
+				path, m, cfg, stdout, stderr,
+			)
 			if err != nil {
 				return err
 			}

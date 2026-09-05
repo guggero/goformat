@@ -37,6 +37,10 @@ func Format(src []byte, filename string,
 	if cfg == nil {
 		cfg = config.Default()
 	}
+	if len(cfg.SelectedRules) == 1 && cfg.SelectedRules[0] == "R10" {
+		diagnostics, err := Diagnostics(src, filename, cfg)
+		return src, diagnostics, err
+	}
 
 	// maxFormatIterations bounds the fixed-point loop. Convergence is
 	// observed within 2–3 rounds; the cap is a safety net against an
@@ -131,6 +135,19 @@ func formatOnce(src []byte, filename string,
 			}
 		}
 	}
+	diags = append(diags, outputLineDiagnostics(out, filename, cfg)...)
+
+	return out, diags, nil
+}
+
+// outputLineDiagnostics checks rendered lines, honoring both opt-out
+// directives.
+func outputLineDiagnostics(out []byte, filename string,
+	cfg *config.Config) []diag.Diagnostic {
+
+	if !cfg.Rules.LineLengthCheckOn() {
+		return nil
+	}
 	nolintRanges := nolintOutputRanges(out)
 	for _, r := range noformatRanges(out) {
 		nolintRanges = append(nolintRanges, lineRange{
@@ -138,11 +155,7 @@ func formatOnce(src []byte, filename string,
 			bytes.Count(out[:r.end-1], []byte("\n")) + 1,
 		})
 	}
-	diags = append(
-		diags, checkLineLength(filename, out, cfg, nolintRanges)...,
-	)
-
-	return out, diags, nil
+	return checkLineLength(filename, out, cfg, nolintRanges)
 }
 
 // hasNolint reports whether a comment group contains a `//nolint` directive

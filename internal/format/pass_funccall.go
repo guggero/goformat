@@ -29,7 +29,10 @@ type funcCallWrap struct{}
 func (funcCallWrap) Name() string { return "R4" }
 
 func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
-	if !ctx.Config.Rules.FuncCallWrapOn() {
+	r4On := ctx.Config.Rules.FuncCallWrapOn()
+	r5On := ctx.Config.Rules.FormattingFnCompactOn()
+	r6On := ctx.Config.Rules.IndentationSymmetryOn()
+	if !r4On && !r5On && !r6On {
 		return nil
 	}
 	limit := ctx.Config.LineLength
@@ -39,7 +42,6 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 	}
 	fmtFns := ctx.Config.FormattingFuncs
 	denyFns := ctx.Config.FormattingFuncsDeny
-	r5On := ctx.Config.Rules.FormattingFnCompactOn()
 	r8On := ctx.Config.Rules.StructuredLogWrapOn()
 	logMethods := ctx.Config.StructuredLogMethods
 	parents := buildDstParents(ctx.File)
@@ -108,6 +110,9 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		// formatting calls.
 		formattingCall := r5On &&
 			isFormattingCall(ctx, call, fmtFns, denyFns)
+		if !formattingCall && !r4On && !r6On {
+			return true
+		}
 		structuredCall := r8On &&
 			isStructuredLogCall(astCall, logMethods)
 		needsLayoutFix := !formattingCall && !structuredCall &&
@@ -177,6 +182,9 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		}
 
 		kind, breaks := decideCallLayout(ctx, astCall, call, limit, tab)
+		if !r4On && kind != layoutSymmetric && kind != layoutPreserve {
+			return true
+		}
 		if kind != layoutPreserve {
 			for _, arg := range call.Args {
 				ctx.ReflowedArgs[arg] = true
@@ -292,7 +300,7 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 			break
 		}
 	}
-	if containerIdx >= 0 {
+	if ctx.Config.Rules.IndentationSymmetryOn() && containerIdx >= 0 {
 		openW := openTokenWidth(
 			fset, lines, astCall.Args[containerIdx], tab,
 		)
@@ -360,7 +368,7 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 	//     line, which often reads worse than the pack form (e.g.
 	//     `po.addUnknown(byte(\n\tkeyCode,\n), keyData, value, ...)`).
 	//     A last-arg promotion yields a clean "))" closing line.
-	if n >= 1 {
+	if ctx.Config.Rules.IndentationSymmetryOn() && n >= 1 {
 		i := n - 1
 		if cand, ok := promotableContainer(call.Args[i]); ok {
 			astCand := astCall.Args[i]

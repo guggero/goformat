@@ -27,7 +27,7 @@ import (
 func checkLineLength(filename string, src []byte,
 	cfg *config.Config, nolintRanges []lineRange) []diag.Diagnostic {
 
-	if cfg.LineLength <= 0 {
+	if !cfg.Rules.LineLengthCheckOn() || cfg.LineLength <= 0 {
 		return nil
 	}
 	tab := cfg.TabWidth

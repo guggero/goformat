@@ -58,6 +58,10 @@ type Config struct {
 	Exclude []string `toml:"exclude"`
 
 	Rules Rules `toml:"rules"`
+
+	// SelectedRules records an explicit CLI selection, after config
+	// loading.
+	SelectedRules []string `toml:"-"`
 }
 
 // Rules holds per-pass enable toggles. Each field is a pointer so that "absent
@@ -70,9 +74,11 @@ type Rules struct {
 	FuncDefWrap            *bool `toml:"func_def_wrap"`
 	FuncCallWrap           *bool `toml:"func_call_wrap"`
 	FormattingFnCompact    *bool `toml:"formatting_fn_compact"`
+	IndentationSymmetry    *bool `toml:"indentation_symmetry"`
 	StructuredLogWrap      *bool `toml:"structured_log_wrap"`
 	InlineCompositeLit     *bool `toml:"inline_composite_lit"`
 	StringLitWrap          *bool `toml:"string_lit_wrap"`
+	LineLengthCheck        *bool `toml:"line_length_check"`
 	StanzaSpacing          *bool `toml:"stanza_spacing"`
 	BodySplit              *bool `toml:"body_split"`
 	VarBlockWrap           *bool `toml:"var_block_wrap"`
@@ -105,6 +111,12 @@ func (r Rules) FuncCallWrapOn() bool {
 }
 func (r Rules) FormattingFnCompactOn() bool {
 	return boolOr(r.FormattingFnCompact, true)
+}
+func (r Rules) IndentationSymmetryOn() bool {
+	return boolOr(r.IndentationSymmetry, r.FuncCallWrapOn())
+}
+func (r Rules) LineLengthCheckOn() bool {
+	return boolOr(r.LineLengthCheck, true)
 }
 func (r Rules) StructuredLogWrapOn() bool {
 	return boolOr(r.StructuredLogWrap, true)

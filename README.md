@@ -79,6 +79,28 @@ formatting the entire file.
 
 `goformat -rules` lists them; `goformat -explain R7` shows details.
 
+Use `--rule` to check or fix only the listed rules:
+
+```sh
+goformat --rule R15 -check .
+goformat --rule R3,R4 -w .
+goformat --rule R3 --rule R4 --uncommitted-only -w .
+```
+
+Comma-separated and repeated arguments combine into one selection. IDs R1–R16
+are case-insensitive; unknown or empty IDs are errors. The selection overrides
+all config rule toggles: selected rules are enabled and all others disabled.
+Other settings, including line width, exclusions, and `--optimize`, still apply.
+The usual Go printer normalization still applies when running formatting rules;
+`//noformat` and `//nolint` protections remain active.
+
+R5 (formatting calls) and R6 (symmetry) can run independently of R4. R4 alone
+preserves existing symmetric layouts but does not produce new ones. Selecting
+R8 or R10 also prints their lint diagnostics to stderr, and `-check` fails on
+those diagnostics. R10 alone checks the original source without rewriting it,
+even with `-w`; it has no automatic fix. With Git selection flags, diagnostics
+are limited to the affected constructs.
+
 Partially wrapped function calls are corrected even when every line fits:
 arguments move below the opening `(` and the closing `)` gets its own line,
 unless the call uses the indentation symmetry exception. `--optimize` also
@@ -102,6 +124,7 @@ their compact layout exceptions.
 | R13 | Var-block wrap: long `var a,b,c,…T` → `var ( ... )` block         | Var only; no const/type, no value-bearing    |
 | R14 | Collect package constants, then variables, into blocks after imports | Keeps numeric enums and interface assertions in place; preserves initialization order |
 | R15 | Comment reflow: split overlong `//` comments at word boundaries   | Skips tool directives (`//go:`, `//nolint:`, `//line`), block comments, and comments with no internal spaces (URLs, dividers) |
+| R16 | Break long binary expressions after operators                    | Runs before call wrapping |
 
 ## Preserve code with `//noformat`
 

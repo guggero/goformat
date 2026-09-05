@@ -9,9 +9,8 @@ type RuleDoc struct {
 }
 
 // Rules returns the docs for every rule (and meta-rule) goformat knows about.
-// The list reflects what's actually implemented in v0.1; deferred rules (R6,
-// R7) appear with status notes so users aren't surprised when the formatter
-// doesn't apply them.
+// R1–R16 can be selected with --rule. The noformat entry documents an always-on
+// protection directive rather than a selectable transformation.
 func Rules() []RuleDoc {
 	return []RuleDoc{
 		{
