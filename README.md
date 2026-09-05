@@ -30,6 +30,51 @@ goformat -w ./...
 cat file.go | goformat
 ```
 
+## Format Git changes
+
+Use either of these mutually exclusive flags to select edits in Git:
+
+```sh
+# Staged and unstaged changes, compared with HEAD:
+goformat --uncommitted-only -w .
+
+# Unstaged changes, compared with the index:
+goformat --unstaged-only -w .
+
+# Restrict the selection to a directory or individual files:
+goformat --uncommitted-only -w accounts brokers/dfx/api.go
+
+# Check before committing, without writing:
+goformat --uncommitted-only -check .
+```
+
+With no paths, selection is limited to the current directory and its
+subdirectories. Explicit paths further filter the selected files, and can refer
+to another Git working tree. Directory exclusions work as usual. Untracked,
+non-ignored Go files are treated as entirely new; deleted files are skipped.
+Renaming a tracked file alone does not select its committed contents. Repositories
+without a first commit are supported.
+
+The formatter parses the complete working-tree file for context, then formats
+the statements, signatures, fields, and comment groups affected by the changes.
+A complete fix can extend beyond the original hunk, such as rewrapping the rest
+of a call. Editing a package constant or variable can organize that declaration
+section at the top of the file, preserving initialization order and the usual
+assertion, enum, and `//noformat` exceptions. Unrelated function bodies and
+statements retain their original bytes.
+
+These flags use the existing `-d`, `-l`, `-w`, and `-check` modes and work with
+`--optimize`. They require Git and cannot read stdin. The index is never rewritten:
+`-w` changes the working tree, including for staged files. Review and stage the
+formatting changes before committing; `-check` is suitable for a hook that should
+stop until that is done. `--uncommitted-only` considers net working-tree changes
+relative to `HEAD`, including both staged and unstaged edits.
+
+Local formatting is re-parsed and checked for equivalent syntax and comment
+contents. If a fix cannot be isolated safely from unrelated code, it is skipped
+with a diagnostic; `-check` exits nonzero in that case. There is no fallback to
+formatting the entire file.
+
 ## Rules
 
 `goformat -rules` lists them; `goformat -explain R7` shows details.

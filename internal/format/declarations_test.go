@@ -153,3 +153,47 @@ func TestDeclarationGroupingDisabled(t *testing.T) {
 		t.Fatalf("disabled grouping changed source: %v\n%s", err, out)
 	}
 }
+
+func TestCollectChangedDeclarationsSemantics(t *testing.T) {
+	sources := []string{
+		`package p
+var count int
+func next() int { count++; return count }
+var first = next()
+// Protected initialization forms an ordering boundary.
+//noformat
+var   middle=next()
+func f() {}
+var last = next()
+`,
+		`package p
+const ( A = iota; B )
+func f() {}
+const ( C = iota + 10; D )
+var first = next()
+var (_ int = next(); last = next())
+func next() int { return 1 }
+`,
+	}
+	for _, src := range sources {
+		beforeValues, beforeOrder := declarationSemantics(t, []byte(
+			src,
+		))
+		out, err := CollectChangedDeclarations(
+			[]byte(src), "test.go", []LineRange{
+				{
+					0, 100,
+				},
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		afterValues, afterOrder := declarationSemantics(t, out)
+		if !reflect.DeepEqual(beforeValues, afterValues) ||
+			!reflect.DeepEqual(beforeOrder, afterOrder) {
+
+			t.Fatalf("scoped collection changed semantics:\n%s", out)
+		}
+	}
+}

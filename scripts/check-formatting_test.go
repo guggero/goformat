@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"testing"
+
+	"github.com/guggero/goformat/internal/syntax"
 )
 
 func TestFingerprint(t *testing.T) {
@@ -93,6 +95,25 @@ func TestFingerprint(t *testing.T) {
 			after, err := fingerprint([]byte(tt.after))
 			if err != nil {
 				t.Fatal(err)
+			}
+
+			// The CLI shares these guarantees, while the script
+			// stays usable as a standalone standard-library
+			// program.
+			for _, source := range []string{tt.before, tt.after} {
+				standalone, err := fingerprint([]byte(source))
+				if err != nil {
+					t.Fatal(err)
+				}
+				shared, err := syntax.Fingerprint([]byte(
+					source,
+				))
+				if err != nil ||
+					!bytes.Equal(standalone, shared) {
+
+					t.Fatalf("CLI and standalone syntax "+
+						"checks diverged: %v", err)
+				}
 			}
 			if bytes.Equal(before, after) != tt.equal {
 				t.Fatalf("equivalence: want %v", tt.equal)

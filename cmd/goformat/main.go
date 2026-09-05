@@ -17,7 +17,8 @@ import (
 	"github.com/guggero/goformat/internal/format"
 )
 
-const usage = `usage: goformat [flags] [path...]
+const (
+	usage = `usage: goformat [flags] [path...]
 
 Modes (exclusive; default: -d):
   -w              rewrite files in place
@@ -28,6 +29,14 @@ Modes (exclusive; default: -d):
 Options:
   -optimize       also apply soft, space-efficiency fixes to code that already
                   fits
+  -uncommitted-only
+                  format only changed hunks relative to HEAD (staged + unstaged)
+  -unstaged-only  format only changed hunks relative to the index
+                  These flags are mutually exclusive. Untracked Go files are
+                  entirely eligible. Paths further restrict selection; the
+                  default scope is the current directory. Writes affect only
+                  the working tree. Complete fixes may extend beyond a hunk,
+                  but unrelated statements and declarations are preserved.
   -exclude PAT    skip dirs/files matching PAT when walking a directory
                   (repeatable; comma-separated values supported). Appends to
                   any 'exclude' list in goformat.toml. PAT is matched against
@@ -53,6 +62,11 @@ Info:
 
 paths: file or directory (recursed); "-" reads stdin.
 `
+)
+
+var (
+	errChangesNeeded = errors.New("changes needed")
+)
 
 type mode int
 
@@ -62,8 +76,6 @@ const (
 	modeList
 	modeCheck
 )
-
-var errChangesNeeded = errors.New("changes needed")
 
 func main() {
 	err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
@@ -104,6 +116,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			"optimize", false, "also apply soft, space-efficiency "+
 				"fixes to code that already fits",
 		)
+		uncommittedOnly = fset.Bool(
+			"uncommitted-only", false,
+			"format only working-tree hunks changed relative to "+
+				"HEAD",
+		)
+		unstagedOnly = fset.Bool(
+			"unstaged-only", false,
+			"format only working-tree hunks changed relative to "+
+				"the index",
+		)
 		excludes excludeFlag
 	)
 	fset.Var(
@@ -114,6 +136,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	)
 	if err := fset.Parse(args); err != nil {
 		return err
+	}
+
+	if *uncommittedOnly && *unstagedOnly {
+		return errors.New(
+			"--uncommitted-only and --unstaged-only are mutually " +
+				"exclusive",
+		)
 	}
 
 	if *rules ||
@@ -141,6 +170,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cfg.Exclude = append(cfg.Exclude, excludes...)
 
 	paths := fset.Args()
+	if *uncommittedOnly || *unstagedOnly {
+		return processChangedPaths(
+			paths, *uncommittedOnly, m, cfg, stdout, stderr,
+		)
+	}
 	if len(paths) == 0 {
 		paths = []string{"-"}
 	}
@@ -260,18 +294,32 @@ func processFile(path string, m mode, cfg *config.Config,
 	if err != nil {
 		return false, err
 	}
+	return outputFile(path, path, src, out, m, stdout)
+}
+
+func outputFile(path, name string, src, out []byte, m mode,
+	stdout io.Writer) (bool, error) {
+
 	if bytes.Equal(src, out) {
 		return false, nil
 	}
 	switch m {
 	case modeWrite:
+		current, err := os.ReadFile(path)
+		if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(current, src) {
+			return false, fmt.Errorf("%s changed while "+
+				"formatting; no output written", name)
+		}
 		return true, os.WriteFile(path, out, 0o644)
 
 	case modeDiff:
-		_, _ = fmt.Fprint(stdout, briefDiff(path, src, out))
+		_, _ = fmt.Fprint(stdout, briefDiff(name, src, out))
 
 	case modeList:
-		_, _ = fmt.Fprintln(stdout, path)
+		_, _ = fmt.Fprintln(stdout, name)
 
 	case modeCheck:
 		// signal only

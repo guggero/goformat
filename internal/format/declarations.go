@@ -11,10 +11,98 @@ import (
 	"strings"
 )
 
+// LineRange identifies zero-based source lines with an exclusive End.
+type LineRange struct {
+	Start, End int
+}
+
+// CollectChangedDeclarations applies the collection rule only when an eligible
+// package declaration was edited. Organizing its section may move declarations
+// outside the changed lines, while other source bytes are left untouched.
+func CollectChangedDeclarations(src []byte, filename string,
+	changed []LineRange) ([]byte, error) {
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	types := declarationTypes(file)
+	protected := noformatRanges(src)
+	constants, variables := false, false
+	var previous ast.Decl
+	for _, declaration := range file.Decls {
+		prev := previous
+		previous = declaration
+		gd, ok := declaration.(*ast.GenDecl)
+		if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+			continue
+		}
+		start := gd.Pos()
+		if gd.Doc != nil {
+			start = gd.Doc.Pos()
+		}
+		first := fset.PositionFor(start, false)
+		last := fset.PositionFor(gd.End(), false)
+		touched := false
+		for _, r := range changed {
+			touched = touched ||
+				(first.Line-1 < r.End && last.Line > r.Start)
+		}
+		for _, r := range protected {
+			if first.Offset < r.end && last.Offset > r.start {
+				touched = false
+				break
+			}
+		}
+		if !touched || (gd.Tok == token.CONST && isEnumDeclaration(
+			gd, prev, types,
+		)) {
+
+			continue
+		}
+		if gd.Tok == token.CONST {
+			constants = true
+		} else {
+			for _, spec := range gd.Specs {
+				variables = variables ||
+					!isTypeAssertion(spec.(*ast.ValueSpec))
+			}
+		}
+	}
+	if !constants && !variables {
+		return src, nil
+	}
+	return collectDeclarationsWithOptions(
+		src, filename, constants, variables, true,
+	)
+}
+
+func declarationTypes(file *ast.File) map[string]ast.Expr {
+	types := make(map[string]ast.Expr)
+	for _, declaration := range file.Decls {
+		if gd, ok := declaration.(*ast.GenDecl); ok &&
+			gd.Tok == token.TYPE {
+
+			for _, spec := range gd.Specs {
+				ts := spec.(*ast.TypeSpec)
+				types[ts.Name.Name] = ts.Type
+			}
+		}
+	}
+	return types
+}
+
 // collectDeclarations runs before decoration so relocated documentation gets
 // fresh source positions. It retains specification order, and treats protected
 // declarations and effectful assertions as initialization-order barriers.
 func collectDeclarations(src []byte, filename string) ([]byte, error) {
+	return collectDeclarationsWithOptions(src, filename, true, true, false)
+}
+
+func collectDeclarationsWithOptions(src []byte, filename string,
+	constantsOn, variablesOn, tidy bool) ([]byte, error) {
+
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
 	if err != nil {
@@ -23,15 +111,7 @@ func collectDeclarations(src []byte, filename string) ([]byte, error) {
 	file := fset.File(f.Pos())
 	offset := file.Offset
 	protected := noformatRanges(src)
-	types := make(map[string]ast.Expr)
-	for _, d := range f.Decls {
-		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
-			for _, spec := range gd.Specs {
-				ts := spec.(*ast.TypeSpec)
-				types[ts.Name.Name] = ts.Type
-			}
-		}
-	}
+	types := declarationTypes(f)
 
 	// Include a trailing comment in a moved declaration's source span.
 	declEnd := func(d ast.Node) int {
@@ -73,6 +153,19 @@ func collectDeclarations(src []byte, filename string) ([]byte, error) {
 	var constants []string
 	var variables []string
 	varAnchor := anchor
+	if variablesOn && !constantsOn {
+		// Unchanged leading const blocks stay ahead of the variable
+		// section.
+		for _, declaration := range f.Decls {
+			gd, ok := declaration.(*ast.GenDecl)
+			if !ok || (gd.Tok != token.IMPORT && gd.Tok != token.CONST && gd.Tok != token.VAR) {
+				break
+			}
+			if gd.Tok == token.CONST {
+				varAnchor = declEnd(gd)
+			}
+		}
+	}
 	flushConstants := func() {
 		if len(constants) > 0 {
 			constGroups = append(constGroups, declarationBlock(
@@ -98,6 +191,11 @@ func collectDeclarations(src []byte, filename string) ([]byte, error) {
 		gd, ok := d.(*ast.GenDecl)
 		if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) ||
 			len(gd.Specs) == 0 {
+
+			continue
+		}
+		if (gd.Tok == token.CONST && !constantsOn) ||
+			(gd.Tok == token.VAR && !variablesOn) {
 
 			continue
 		}
@@ -237,6 +335,51 @@ func collectDeclarations(src []byte, filename string) ([]byte, error) {
 			"\n\n" + strings.Join(blocks, "\n\n") + "\n\n",
 		})
 	}
+	trimEOF := false
+	if tidy {
+		for i := range edits {
+			e := &edits[i]
+			if e.start == e.end {
+				// Replace separator whitespace at the insertion
+				// point, rather than accumulating blank lines
+				// on each scoped formatting run.
+				for j := e.end; j < len(src); j++ {
+					if src[j] != ' ' && src[j] != '\t' &&
+						src[j] != '\r' &&
+						src[j] != '\n' {
+
+						break
+					}
+					if src[j] == '\n' {
+						e.end = j + 1
+					}
+				}
+				continue
+			}
+			start, end := lineStart(
+				src, e.start,
+			), lineEnd(
+				src, e.end,
+			)
+			if len(bytes.TrimSpace(src[start:e.start])) != 0 ||
+				len(bytes.TrimSpace(src[e.end:end])) != 0 {
+
+				continue
+			}
+			e.start, e.end = start, end
+			trimEOF = trimEOF || (end == len(src) && e.text == "")
+			if end < len(src) {
+				next := lineEnd(src, end)
+				if len(bytes.TrimSpace(src[end:next])) == 0 {
+					e.end = next
+				}
+			}
+			if e.text != "" {
+				e.text = strings.TrimRight(e.text, "\n") +
+					"\n\n"
+			}
+		}
+	}
 	sort.SliceStable(edits, func(i, j int) bool {
 		if edits[i].start == edits[j].start {
 			return edits[i].end < edits[j].end
@@ -255,7 +398,20 @@ func collectDeclarations(src []byte, filename string) ([]byte, error) {
 		prev = e.end
 	}
 	out.Write(src[prev:])
-	return out.Bytes(), nil
+	result := out.Bytes()
+	if trimEOF {
+		// Removing a final declaration also removes its now-unused
+		// separator. Preserve all bytes on the preceding code line,
+		// including noformat.
+		for len(result) > 0 {
+			start := lineStart(result, len(result)-1)
+			if len(bytes.TrimSpace(result[start:])) != 0 {
+				break
+			}
+			result = result[:start]
+		}
+	}
+	return result, nil
 }
 
 func declarationBlock(kind string, chunks []string) string {
