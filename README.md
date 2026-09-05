@@ -34,11 +34,17 @@ cat file.go | goformat
 
 `goformat -rules` lists them; `goformat -explain R7` shows details.
 
+Partially wrapped function calls are corrected even when every line fits:
+arguments move below the opening `(` and the closing `)` gets its own line,
+unless the call uses the indentation symmetry exception. `--optimize` also
+compacts already-valid layouts. Formatting and structured-log calls retain
+their compact layout exceptions.
+
 | ID  | Rule                                                              | Notes                                        |
 |-----|-------------------------------------------------------------------|----------------------------------------------|
 | R1  | Blank line between switch / select case clauses                   |                                              |
 | R2  | Blank line after multi-line header (func / if / for / switch / range / FuncLit) | Also removes the blank when R3 collapses a sig back to single-line |
-| R3  | Wrap/repack function definitions                                  | Greedy pack; no return-list wrapping yet     |
+| R3  | Wrap/repack function definitions                                  | Greedy pack parameters and return types     |
 | R4  | Wrap/repack overlong function calls                               | Pack-or-spread; bails on multi-line method chains |
 | R5  | Formatting funcs: split format string with `+`                    | Allow/deny lists configurable; preserves multi-line layouts whose lines already fit |
 | R6  | Indentation symmetry for nested calls                             | Preserve AND produce both inline-symmetric (`f(a, &T{ ... })`) and wrapped-symmetric (`f(\n  a, &T{ ... },\n)`) forms |
@@ -49,7 +55,44 @@ cat file.go | goformat
 | R11 | Stanza spacing: blank line before comment-led statements          |                                              |
 | R12 | Body split: single-line function body whose line exceeds limit    |                                              |
 | R13 | Var-block wrap: long `var a,b,c,…T` → `var ( ... )` block         | Var only; no const/type, no value-bearing    |
+| R14 | Collect package constants, then variables, into blocks after imports | Keeps numeric enums and interface assertions in place; preserves initialization order |
 | R15 | Comment reflow: split overlong `//` comments at word boundaries   | Skips tool directives (`//go:`, `//nolint:`, `//line`), block comments, and comments with no internal spaces (URLs, dividers) |
+
+## Preserve code with `//noformat`
+
+A standalone `//noformat` (or `// noformat`) preserves the immediately following
+physical line byte for byte, including whitespace. If that line opens a
+multi-line construct, protection extends through its closing delimiters. This
+covers functions, calls with closures, composite literals, and declaration
+blocks. Put the directive immediately above the code, after any Godoc comment:
+
+```go
+// Lookup uses a deliberately aligned table.
+//noformat
+func Lookup(code int) string {
+    return table[ code ]
+}
+```
+
+Protected code is exempt from every rule, declaration movement, and line-length
+diagnostics, in both default and `--optimize` modes. Other code still formats.
+The existing `//nolint` behavior is unchanged.
+
+Package-level constants and variables are collected by default into `const`
+blocks followed by `var` blocks after imports, even for a single declaration.
+Comments on standalone declarations move inside the collected blocks and reflow
+at their new indentation. Existing blocks with headers remain separate blocks,
+with their headers above them. Local declarations retain their scope. Typed blank-variable assertions stay in place,
+as do const declarations immediately following a numeric type definition whose
+values have that type. Numeric aliases and explicitly typed conversions are
+recognized when their types can be resolved within the file.
+
+Independent `iota` groups remain separate blocks to preserve constant values.
+Variable specification order is preserved. Protected variables and assertions
+with potentially effectful initializers act as ordering boundaries; later
+variables collect after that boundary. A mixed block containing such an
+assertion stays together. Set `[rules] declaration_grouping = false` to disable
+collection.
 
 ## Configuration
 
@@ -118,14 +161,14 @@ R10 diagnostic checks.
 
 The remaining edges are corner cases:
 
-- **R3 single-param / return-list wrapping** — only multi-param signature
-  wrapping is implemented; a sig with one very long param can still
-  exceed the limit.
+- **R3 complex signatures** — signatures containing comments or multi-line
+  parameter/result types retain their layout. Signatures that cannot fit at
+  legal parameter/result boundaries can still exceed the limit.
 - **R8 typed detection** — name-based today. `go/packages` resolution
   (so we recognise actual `btclog.Logger.*S` calls and reject false
   positives) is a future refinement.
-- **R13 scope** — only ungrouped `var` decls with a single ValueSpec
-  and no values. const/type/multi-spec are out of scope.
+- **R13 scope** — only `var` specifications without initializers, including
+  specifications inside collected blocks. const/type declarations are out of scope.
 - **Long-token comments** — URLs and decorative `===` dividers in
   comments have no word boundaries to split at, so R15 leaves them
   alone (R10 still warns).
@@ -147,3 +190,28 @@ go build -o ./goformat ./cmd/goformat
 harness asserts `Format(in) == out` and `Format(out) == out`
 (idempotency). Add a new rule case by dropping a new `.in.go`,
 running `go test … -update`, and reviewing the generated `.out.go`.
+
+## Verify a formatting commit
+
+Compare the latest commit with its parent using the standalone, standard-library
+checker:
+
+```sh
+go run ./scripts/check-formatting.go -repo /path/to/repo -path core
+```
+
+Use `-base <commit>` and `-head <commit>` for another commit range. Paths are
+relative to the target repository root. The checker reads committed files
+without modifying either checkout and exits nonzero when a file needs review.
+
+It compares parsed Go syntax while ignoring source locations, trailing commas,
+and literal string splitting/joining. Decoded string bytes must match, including
+whitespace inside strings. Prose comments are compared with whitespace
+normalized; recognized directives and their declaration attachments are checked,
+and cgo preambles must match exactly. Added/deleted files, mode changes, and
+non-Go changes require review. This checks structural equivalence, not arbitrary
+behavioral equivalence or location-dependent behavior such as `runtime.Caller`.
+
+Declaration collection changes AST structure and declaration order. The commit
+checker intentionally reports those changes for review; it does not certify
+R14 changes as whitespace-only.

@@ -32,8 +32,8 @@ var log = struct {
 		t.Fatalf("want 1 R8 diagnostic, got %d (all: %v)", len(got),
 			diags)
 	}
-	if got[0].Line != 6 {
-		t.Errorf("R8 on line %d, want 6", got[0].Line)
+	if got[0].Line != 12 {
+		t.Errorf("R8 on line %d, want 12", got[0].Line)
 	}
 }
 

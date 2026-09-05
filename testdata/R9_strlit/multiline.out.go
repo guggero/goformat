@@ -2,29 +2,31 @@ package r9
 
 import "errors"
 
-var test = map[int]string{
-	0: "70736274ff0100750200000001268171371edff285e937adeea4b37b78000c056" +
-		"6cbb3ad64641713ca42171bf60000000000feffffff02d3dff5050000000" +
-		"01976a914d0c59903c5bac2868760e90fd521a4665aa7652088ac00e1f50" +
-		"50000000017a9143545e6e33b832c47050f24d3eeb93c9c03948bc787b32" +
-		"e1300000100fda5010100000000010289a3c71eab4d20e0371bbba4cc698" +
-		"fa295c9463afa2e397f8533ccb62f9567e50100000017160014be18d152a" +
-		"9b012039daf3da7de4f53349eecb985ffffffff86f8aa43a71dff1448893" +
-		"a530a7237ef6b4608bbb2dd2d0171e63aec6a4890b40100000017160014f" +
-		"e3e9ef1a745e974d902c4355943abcb34bd5353ffffffff0200c2eb0b000" +
-		"000001976a91485cff1097fd9e008bb34af709c62197b38978a4888ac72f" +
-		"ef84e2c00000017a914339725ba21efd62ac753a9bcd067d6c7a6a39d058" +
-		"70247304402202712be22e0270f394f568311dc7ca9a68970b8025fdd3b2" +
-		"40229f07f8a5f3a240220018b38d7dcd314e734c9276bd6fb40f673325bc" +
-		"4baa144c800d2f2f02db2765c012103d2e15674941bad4a996372cb87e18" +
-		"56d3652606d98562fe39c5e9e7e413f210502483045022100d12b852d85d" +
-		"cd961d2f5f4ab660654df6eedcc794c0c33ce5cc309ffb5fce58d0220673" +
-		"38a8e0e1725c197fb1a88af59f51e44e4255b20167c8684031c05d1f2592" +
-		"a01210223b72beef0965d10be0778efecd61fcac6f79a4ea169393380734" +
-		"464f84f2ab300000000000000",
-}
-
 var (
+	test = map[int]string{
+		0: "70736274ff0100750200000001268171371edff285e937adeea4b37b7" +
+			"8000c0566cbb3ad64641713ca42171bf60000000000feffffff0" +
+			"2d3dff505000000001976a914d0c59903c5bac2868760e90fd52" +
+			"1a4665aa7652088ac00e1f5050000000017a9143545e6e33b832" +
+			"c47050f24d3eeb93c9c03948bc787b32e1300000100fda501010" +
+			"0000000010289a3c71eab4d20e0371bbba4cc698fa295c9463af" +
+			"a2e397f8533ccb62f9567e50100000017160014be18d152a9b01" +
+			"2039daf3da7de4f53349eecb985ffffffff86f8aa43a71dff144" +
+			"8893a530a7237ef6b4608bbb2dd2d0171e63aec6a4890b401000" +
+			"00017160014fe3e9ef1a745e974d902c4355943abcb34bd5353f" +
+			"fffffff0200c2eb0b000000001976a91485cff1097fd9e008bb3" +
+			"4af709c62197b38978a4888ac72fef84e2c00000017a91433972" +
+			"5ba21efd62ac753a9bcd067d6c7a6a39d0587024730440220271" +
+			"2be22e0270f394f568311dc7ca9a68970b8025fdd3b240229f07" +
+			"f8a5f3a240220018b38d7dcd314e734c9276bd6fb40f673325bc" +
+			"4baa144c800d2f2f02db2765c012103d2e15674941bad4a99637" +
+			"2cb87e1856d3652606d98562fe39c5e9e7e413f2105024830450" +
+			"22100d12b852d85dcd961d2f5f4ab660654df6eedcc794c0c33c" +
+			"e5cc309ffb5fce58d022067338a8e0e1725c197fb1a88af59f51" +
+			"e44e4255b20167c8684031c05d1f2592a01210223b72beef0965" +
+			"d10be0778efecd61fcac6f79a4ea169393380734464f84f2ab30" +
+			"0000000000000",
+	}
 	ErrLockTimeConflict = errors.New(
 		"inputs have conflicting locktime requirements",
 	)
@@ -34,14 +36,19 @@ var (
 			"only supported by v1 (this is a long text on purpose)",
 	)
 
-	ErrInputsNotModifiable = errors.New("inputs are not modifiable in " +
-		"this PSBT")
+	ErrInputsNotModifiable = errors.New(
+		"inputs are not modifiable in this PSBT",
+	)
 
-	ErrInputAlreadyFinalized = errors.New("Cannot finalize PSBT, " +
-		"finalized scriptSig or scriptWitnes already exists")
+	ErrInputAlreadyFinalized = errors.New(
+		"Cannot finalize PSBT, finalized scriptSig or scriptWitnes " +
+			"already exists",
+	)
 
-	ErrInvalidPrevOutNonWitnessTransaction = errors.New("Prevout hash " +
-		"does not match the provided non-witness utxo serialization")
+	ErrInvalidPrevOutNonWitnessTransaction = errors.New(
+		"Prevout hash does not match the provided non-witness utxo " +
+			"serialization",
+	)
 
 	hexString = "70736274ff01007374ff01030100000000002f0000002e2873007374" +
 		"ff0107010000000000000000000000000000000000000006068005000073" +

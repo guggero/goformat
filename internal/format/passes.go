@@ -11,6 +11,63 @@ import (
 	"github.com/guggero/goformat/internal/diag"
 )
 
+var (
+	// pipeline is the ordered list of AST passes. R10 is a post-render
+	// check handled directly in Format and isn't part of this list.
+	//
+	// Ordering rationale:
+	//   - R1 (switch spacing) only flips Decs on case clauses; runs first.
+	//   - R9 (string reflow) runs after R4 so strings use the new argument
+	//     layout. R4 records reflowed arguments so R9 can join or re-split
+	//     their strings even without --optimize.
+	//   - R3 (func def wrap) may mark previously-single-line signatures as
+	//     multi-line by adding entries to ctx.MultilineSigs. R2 must run
+	//     after R3 so it picks those up.
+	pipeline = []Pass{
+		switchCaseSpacing{},
+		funcDefWrap{},
+		bodySplit{},
+		// R7 runs before R4 so the call-wrap pass sees R7-reflowed
+		// composites as multi-line containers and can apply the
+		// inline-symmetric form (`f(a, &T{ ... })`).
+		compositeLitReflow{},
+		// R8 runs before R4 so it can mark inner calls as OuterHandled
+		// and apply its own structured-log layout.
+		structuredLogWrap{},
+		// R16 runs before R4 so its operator-break decision marks
+		// operand calls as OuterHandled — preventing R4 from
+		// re-wrapping a call whose containing binary expression has
+		// just been broken at the operator.
+		binaryOpWrap{},
+		funcCallWrap{},
+		// Revisit closure signatures at their argument positions before
+		// R2 decides whether their bodies still need a separating blank
+		// line.
+		funcLiteralWrap{},
+		// R9 runs after R4 so it sees the final wrap state and budgets
+		// the chunks against the post-wrap indent (a string arg of a
+		// wrapped call lives one tab deeper than its source column). R9
+		// also reflows existing string-concat chains — joining and
+		// re-splitting at optimal positions — so it subsumes what the
+		// old separate "string join" pass used to do.
+		stringLitWrap{},
+		varBlockWrap{},
+		// R2 runs after R3/R4 so it sees the FINAL multi-line state of
+		// every function signature, control-flow header, and func
+		// literal. Wrapping a call inside an if/for/switch header turns
+		// that header multi-line in the output — even if it was
+		// single-line in source — and R2 needs to honour that to add
+		// the body blank.
+		funcSignatureBodyBlank{},
+		// Stanza spacing runs last so it sees the final block layout.
+		stanzaSpacing{},
+		// Comment reflow is purely textual on the dst decoration slots
+		// — it doesn't depend on any other pass's output, so it goes at
+		// the very end.
+		commentReflow{},
+	}
+)
+
 // Pass is one formatter rule. Apply walks ctx.File, may mutate decorations and
 // layout, and returns diagnostics for issues it can't auto-fix.
 type Pass interface {
@@ -49,6 +106,10 @@ type Context struct {
 	// Drives R9.
 	StringsToSplit map[*dst.BasicLit]stringSplit
 
+	// ReflowedArgs identifies arguments laid out by R4 in this pass. R9
+	// reflows their strings at the new geometry even without --optimize.
+	ReflowedArgs map[dst.Expr]bool
+
 	// OuterHandled records CallExprs whose layout has been chosen by an
 	// outer rule (R8 placing it on its own continuation line, R4 wrapping
 	// its parent). The call walker uses source-column measurement, which is
@@ -58,75 +119,26 @@ type Context struct {
 
 	// NolintFuncs records FuncDecls whose doc comment contains a `//nolint`
 	// directive (with or without a leading space; optional `:rule1,rule2`
-	// suffix). Every mutation pass uses ctx.SkipNolintDecl at the entry of
+	// suffix). Every mutation pass uses ctx.SkipFormatting at the entry of
 	// its dst.Inspect callback so the entire function — signature, body,
 	// and every nested construct — is left untouched. R10 (line-length
 	// check) honours the same set by suppressing diagnostics for the
 	// function's line range in the rendered output.
 	NolintFuncs map[*dst.FuncDecl]bool
+
+	// Protected holds exact source regions covered by //noformat.
+	Protected []protectedSource
 }
 
-// SkipNolintDecl is the standard early-skip helper for every mutation pass:
-// when n is a FuncDecl in ctx.NolintFuncs, return false from dst.Inspect /
-// dstutil.Apply to block descent into the function entirely. Returning
-// false at the FuncDecl node is sufficient — depth-first traversal visits
-// the FuncDecl before any descendant, so a single guard at the top of each
-// pass's walker covers every nested construct inside the function.
-func (ctx *Context) SkipNolintDecl(n dst.Node) bool {
+// SkipFormatting is the common traversal guard for every mutation pass.
+// It skips nolint functions, noformat regions, and expressions whose layout
+// depends on a protected descendant. The printer's changes to protected bytes
+// are undone separately after all passes have finished.
+func (ctx *Context) SkipFormatting(n dst.Node) bool {
 	if fd, ok := n.(*dst.FuncDecl); ok {
 		if ctx.NolintFuncs[fd] {
 			return true
 		}
 	}
-	return false
-}
-
-// pipeline is the ordered list of AST passes. R10 is a post-render check
-// handled directly in Format and isn't part of this list.
-//
-// Ordering rationale:
-//   - R1 (switch spacing) only flips Decs on case clauses; runs first.
-//   - R9 (string-literal split) replaces a *dst.BasicLit with a BinaryExpr.
-//     Running it before R4/R5 means R4 sees the BinaryExpr in arg position
-//     and can lay it out coherently.
-//   - R3 (func def wrap) may mark previously-single-line signatures as
-//     multi-line by adding entries to ctx.MultilineSigs. R2 must run
-//     after R3 so it picks those up.
-//   - R4 (func call wrap) is independent and runs last.
-var pipeline = []Pass{
-	switchCaseSpacing{},
-	funcDefWrap{},
-	bodySplit{},
-	// R7 runs before R4 so the call-wrap pass sees R7-reflowed composites
-	// as multi-line containers and can apply the inline-symmetric form
-	// (`f(a, &T{ ... })`).
-	compositeLitReflow{},
-	// R8 runs before R4 so it can mark inner calls as OuterHandled and
-	// apply its own structured-log layout.
-	structuredLogWrap{},
-	// R16 runs before R4 so its operator-break decision marks operand calls
-	// as OuterHandled — preventing R4 from re-wrapping a call whose
-	// containing binary expression has just been broken at the operator.
-	binaryOpWrap{},
-	funcCallWrap{},
-	// R9 runs after R4 so it sees the final wrap state and budgets the
-	// chunks against the post-wrap indent (a string arg of a wrapped call
-	// lives one tab deeper than its source column). R9 also reflows
-	// existing string-concat chains — joining and re-splitting at optimal
-	// positions — so it subsumes what the old separate "string join" pass
-	// used to do.
-	stringLitWrap{},
-	varBlockWrap{},
-	// R2 runs after R3/R4 so it sees the FINAL multi-line state of every
-	// function signature, control-flow header, and func literal. Wrapping a
-	// call inside an if/for/switch header turns that header multi-line in
-	// the output — even if it was single-line in source — and R2 needs
-	// to honour that to add the body blank.
-	funcSignatureBodyBlank{},
-	// Stanza spacing runs last so it sees the final block layout.
-	stanzaSpacing{},
-	// Comment reflow is purely textual on the dst decoration slots — it
-	// doesn't depend on any other pass's output, so it goes at the very
-	// end.
-	commentReflow{},
+	return ctx.protectedNode(n)
 }

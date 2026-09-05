@@ -9,4 +9,6 @@ import (
 	paymentsmig1sqlc "github.com/lightningnetwork/lnd/payments/db/migration1/sqlc"
 )
 
-var _ = paymentsmig1sqlc.Querier(nil)
+var (
+	_ = paymentsmig1sqlc.Querier(nil)
+)

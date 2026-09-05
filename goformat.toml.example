@@ -15,8 +15,10 @@ canonicalize = false
 # code that already fits within LineLength and is structurally valid
 # (collapsing a multi-line call onto one line, repacking one-arg-per-
 # line layouts tighter, joining/repacking string concats that break
-# early, re-imposing symmetry on fitting code, compacting comments that
-# already fit). When false (the default) goformat only performs HARD
+# early, compacting valid call layouts, compacting comments that
+# already fit). Invalid call layouts are always corrected, including
+# partial wrapping that violates indentation symmetry.
+# When false (the default) goformat only performs HARD
 # fixes: it reformats a construct solely to resolve an over-limit line
 # or a required non-space structural rule (mandatory blank lines, etc.).
 optimize = true
@@ -84,4 +86,5 @@ exclude = [
 # stanza_spacing            = true   # R11
 # body_split                = true   # R12
 # var_block_wrap            = true   # R13
+# declaration_grouping      = true   # R14 (package const/var blocks)
 # comment_reflow            = true   # R15

@@ -34,22 +34,44 @@ statement. SelectStmt is excluded — "select" never multi-lines.`,
 		{
 			ID:    "R3",
 			Title: "Function-definition wrapping",
-			Summary: `A function signature whose single-line form exceeds the
-line limit is wrapped at parameter boundaries. The first parameter stays
-on the same line as the opening "(", subsequent parameters move to their
-own line, and the closing ")" stays attached to the last parameter (the
-doc forbids dangling close-parens on function definitions). Single-
-parameter signatures and return-list-only wrapping are not yet handled.`,
+			Summary: `Function signatures pack as many parameters or return
+types onto each line as fit within the limit. Closing parentheses stay
+attached to the last field; the first return type stays with its opening
+parenthesis. The first parameter may move to a continuation line when
+needed. Multi-line signatures end with the body's opening "{" on an
+indented line, followed by a blank line before the body.
+
+By default, fitting signatures retain their layout. --optimize also
+repacks fitting signatures and collapses them when possible. Signatures
+with comments, multi-line field types, or no fitting layout at legal
+break points are preserved.
+
+Closure signatures use the same packer after call arguments are laid
+out. Reflowed closures are repacked even without --optimize. A collapsed
+header loses its separating body blank; deliberate blanks after an
+already-single-line header remain.`,
 		},
 		{
 			ID:    "R4",
 			Title: "Function-call wrapping (pack-or-spread)",
 			Summary: `A function call whose single-line form exceeds the line
-limit is wrapped via a greedy packer: outer args + container open token
-fill each continuation line up to the limit, with the closing ")" on its
-own line. When a multi-line input could collapse to single-line (or to
+limit is wrapped via a greedy packer: arguments share continuation lines
+with a multi-line argument's opening and closing tokens, with the outer
+closing ")" on its own line. For example:
+
+    require.Eventually(
+        t, func() bool {
+            return ready()
+        }, timeout, interval,
+        "waiting for readiness",
+    )
+
+When a multi-line input could collapse to single-line (or to
 an inline-symmetric / wrapped-symmetric form), R4 reflows in that
-direction. Method-chain calls (callee spans multiple lines) are left
+direction. Partially wrapped calls are corrected even when all lines
+fit, without --optimize. Already-valid layouts are compacted only with
+--optimize. Formatting and structured-log calls keep their exceptions.
+Method-chain calls (callee spans multiple lines) are left
 alone — source-positional measurements give wrong answers for them.`,
 		},
 		{
@@ -81,10 +103,26 @@ preferred nested form rather than the verbose one-arg-per-line layout:
         IdentityKey: update.IdentityKey,
     })
 
-Already-symmetric inputs are preserved (the rule is a no-op on them).
-Verbose inputs that COULD be symmetric are actively rewritten. When the
-first line wouldn't fit, R4 falls back to the verbose pack — each arg
-on its own continuation line with ")" on its own line.`,
+Already-symmetric inputs are preserved, including multiple nested calls
+sharing a composite literal's opening line and closing together.
+Successive multi-line containers may also share a line that closes one
+and opens the next, provided each opens and closes at the same indentation:
+
+    append([]byte{
+        0x00, 0x14,
+    }, bytes.Repeat([]byte{
+        0x01,
+    }, 20)...)
+
+Anonymous struct literals follow the same rule: in struct { ... }{ ... },
+the type's opening brace starts the first container. An argument before
+it can share that line, both in inline and wrapped calls.
+
+Valid verbose inputs that COULD be symmetric are rewritten with
+--optimize; invalid partial wrapping is always corrected. When the
+first or closing line wouldn't fit, R4 packs continuation lines around
+the container's opening and closing tokens, with the outer ")" on its
+own line.`,
 		},
 		{
 			ID: "R7",
@@ -123,6 +161,11 @@ outermost string expression — a lone interpreted string literal OR a
 "+" concat chain of string literals — gathers the chunks into one
 logical body, then re-splits the body into N chunks sized to fill each
 line up to the limit.
+
+When R4 reflows an argument, R9 reflows its string at the new indentation
+in the same pass, even without --optimize. A split string is joined when
+it now fits on one line. Otherwise fitting strings retain their layout
+by default.
 
 This means three behaviours route through the same code path:
   * Long literal needing a split: keep splitting until each chunk fits.
@@ -174,8 +217,40 @@ own line at the function's indent.`,
 			Summary: `An ungrouped ` + "`var a, b, c, ... T`" + ` declaration
 whose line exceeds the limit is rewritten as a grouped ` + "`var ( ... )`" + `
 block, with the names greedy-packed across spec lines. gofmt auto-aligns
-the trailing types. Scope: var only (no const/type), single ValueSpec,
-no values (no ` + "`var x = 1`" + ` form).`,
+the trailing types. This also splits long name lists inside existing or
+collected var blocks. Scope: var only (no const/type), no values (no ` + ("`va" +
+				"r x = 1`") + ` form).`,
+		},
+		{
+			ID:    "R14",
+			Title: "Collect package constants and variables",
+			Summary: `Package declarations collect after imports: const blocks first,
+then var blocks, including single declarations. Standalone declarations bring
+their Godoc inside the collected block, reflowing at the new indentation.
+Existing documented blocks stay separate, with their headers above them.
+Local declarations keep their scope.
+
+Typed blank-variable assertions remain in place. Const declarations immediately
+following a numeric type definition remain beside that type when every value
+has that type. Numeric aliases and conversions are recognized within the file.
+Independent iota groups keep separate blocks so their values cannot change.
+
+Variable initialization order is preserved. Protected declarations and
+potentially effectful assertions form ordering boundaries. Mixed blocks with
+such assertions stay together. Enabled without --optimize; configurable with
+[rules] declaration_grouping.`,
+		},
+		{
+			ID:    "noformat",
+			Title: "Preserve source exactly",
+			Summary: `A standalone //noformat or // noformat protects the immediately
+following physical line. If that line opens a multi-line construct, protection
+extends through its closing delimiters, including nested calls and closures.
+Place the directive directly above the code, after any Godoc comment.
+
+Protected bytes are restored verbatim after printing, including whitespace.
+All formatting rules, declaration movement, and line-length diagnostics are
+suppressed there. This applies in both default and --optimize modes.`,
 		},
 		{
 			ID: "R16",

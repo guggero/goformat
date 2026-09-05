@@ -64,7 +64,7 @@ func (binaryOpWrap) Apply(ctx *Context) []diag.Diagnostic {
 	parents := buildDstParents(ctx.File)
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		slot := binaryOpSlot(n)

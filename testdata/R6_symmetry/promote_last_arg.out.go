@@ -1,6 +1,8 @@
 package r6
 
-const SettleEverythingThresholdSeconds = 86400
+const (
+	SettleEverythingThresholdSeconds = 86400
+)
 
 type client struct{}
 

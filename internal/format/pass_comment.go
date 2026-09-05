@@ -35,7 +35,7 @@ func (commentReflow) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		if n == nil {
@@ -173,6 +173,8 @@ func isParagraphBreaker(entry string) bool {
 		return true
 	}
 	if strings.HasPrefix(entry, "//go:") ||
+		strings.HasPrefix(entry, "//noformat") ||
+		strings.HasPrefix(entry, "// noformat") ||
 		strings.HasPrefix(entry, "//nolint") ||
 		strings.HasPrefix(entry, "// nolint") ||
 		strings.HasPrefix(entry, "//line ") {

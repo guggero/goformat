@@ -109,8 +109,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fset.Var(
 		&excludes, "exclude",
 		"path patterns to skip when walking a directory (repeatable, "+
-			"comma-separated; matched against basename, relative path, "+
-			"or leading path segment; supports *, ?, [...])",
+			"comma-separated; matched against basename, relative "+
+			"path, or leading path segment; supports *, ?, [...])",
 	)
 	if err := fset.Parse(args); err != nil {
 		return err

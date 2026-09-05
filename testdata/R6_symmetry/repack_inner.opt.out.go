@@ -1,9 +1,11 @@
 package r6
 
+const (
+	urPSBTType FrameType = 1
+)
+
 type FrameType int
 type Frame struct{}
-
-const urPSBTType FrameType = 1
 
 func Encode(t FrameType, body []byte, seqNum, seqLen int) Frame {
 	return Frame{}

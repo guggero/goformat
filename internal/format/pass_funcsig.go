@@ -28,7 +28,7 @@ func (funcSignatureBodyBlank) Apply(ctx *Context) []diag.Diagnostic {
 		return nil
 	}
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		switch s := n.(type) {
@@ -98,7 +98,9 @@ func setBodyBlank(body *dst.BlockStmt, finalMulti, sourceMulti bool) {
 		return
 	}
 	if sourceMulti && decs.Before == dst.EmptyLine {
-		decs.Before = dst.None
+		// Remove the blank without moving a leading comment onto
+		// the header's opening-brace line.
+		decs.Before = dst.NewLine
 	}
 }
 

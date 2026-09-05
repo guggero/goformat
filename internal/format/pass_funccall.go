@@ -45,7 +45,7 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 	parents := buildDstParents(ctx.File)
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		call, ok := n.(*dst.CallExpr)
@@ -102,14 +102,18 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 			return true
 		}
 
-		// HARD-only by default: a call is reformatted solely to resolve
-		// an over-limit line. If every line the call occupies already
-		// fits, the author's layout is structurally valid, so leave it
-		// untouched. Space-efficiency reflows (collapsing a multi-line
-		// call, repacking a one-per-line layout, re-imposing symmetry
-		// on fitting code) are SOFT — opt in with --optimize.
-		if !ctx.Config.Optimize &&
-			allCallLinesFit(ctx, astCall, limit, tab) {
+		// Width and structure are independent: a partially wrapped
+		// ordinary call needs fixing even when every line fits. R5
+		// and R8 own the compact layout exceptions for logging and
+		// formatting calls.
+		formattingCall := r5On &&
+			isFormattingCall(ctx, call, fmtFns, denyFns)
+		structuredCall := r8On &&
+			isStructuredLogCall(astCall, logMethods)
+		needsLayoutFix := !formattingCall && !structuredCall &&
+			!validCallLayout(ctx, astCall, tab)
+		linesFit := allCallLinesFit(ctx, astCall, limit, tab)
+		if !ctx.Config.Optimize && linesFit && !needsLayoutFix {
 
 			return true
 		}
@@ -150,20 +154,19 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		// concat to a single literal and R4 needs to wrap the call.
 		sourceMultiLine := ctx.FileSet.Position(astCall.Pos()).Line !=
 			ctx.FileSet.Position(astCall.End()).Line
-		if sourceMultiLine &&
-			allCallLinesFit(ctx, astCall, limit, tab) &&
+		if sourceMultiLine && linesFit && !needsLayoutFix &&
 			insideLayoutFragileParent(parents, call) {
 
 			return true
 		}
 
 		// R8 owns structured-log calls; skip them here.
-		if r8On && isStructuredLogCall(astCall, logMethods) {
+		if structuredCall {
 			return true
 		}
 
 		// R5: formatting funcs get string-splitting, not the R4 wrap.
-		if r5On && isFormattingCall(ctx, call, fmtFns, denyFns) {
+		if formattingCall {
 			if applyFormattingCallLayout(
 				ctx, astCall, call, limit, tab,
 			) {
@@ -174,6 +177,11 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		}
 
 		kind, breaks := decideCallLayout(ctx, astCall, call, limit, tab)
+		if kind != layoutPreserve {
+			for _, arg := range call.Args {
+				ctx.ReflowedArgs[arg] = true
+			}
+		}
 		switch kind {
 		case layoutCollapse:
 			applyCallLayout(call, nil, false)
@@ -185,7 +193,7 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 			// including the container's open token, container
 			// internals on continuation lines, container close and
 			// outer ')' on a shared closing line."
-			clearArgDecorations(call.Args)
+			clearCallArgLayout(call)
 			// When the container is a FuncLit, the symmetric layout
 			// shifts its body indent to (callIndent + tab), which
 			// may be SHALLOWER than the source. R4 measures
@@ -224,7 +232,7 @@ type layoutKind int
 const (
 	layoutCollapse  layoutKind = iota // single-line fits the limit
 	layoutSymmetric                   // last arg is a multi-line container; outer args inline
-	layoutPack                        // every arg on its own continuation line, ')' on own line
+	layoutPack                        // packed continuation lines, ')' on own line
 	layoutPreserve                    // source layout is symmetric-form and fits; leave alone
 )
 
@@ -233,6 +241,15 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 
 	fset := ctx.FileSet
 	lines := ctx.SourceLines
+
+	// A chain of inline calls can share a deeper container's opening
+	// line and close together, e.g. require.NoError(t, save(ctx, &T{...})).
+	// Measuring only save's opening '(' misses this already compact form.
+	if inlineSymmetricCall(ctx, astCall, tab, false) &&
+		allCallLinesFit(ctx, astCall, limit, tab) {
+
+		return layoutPreserve, nil
+	}
 
 	callCol := visualCol(fset, lines, astCall.Pos(), tab)
 	calleeW := sourceWidth(
@@ -309,14 +326,13 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 				// where greedy packing now fits more args per
 				// line. promoteToMultiline is the right hammer:
 				// it stamps the same Before/After NewLine
-				// pattern with packLayout-driven inner breaks,
+				// pattern with greedily packed inner breaks,
 				// matching what R4 / R7 would produce on a
 				// fresh single-line input.
 				promoteToMultiline(
-					call.Args[containerIdx],
+					ctx, call.Args[containerIdx],
 					astCall.Args[containerIdx],
-					postIndent+tab, limit,
-					fset, lines, tab,
+					postIndent+tab, limit, tab,
 				)
 				return layoutSymmetric, nil
 			}
@@ -379,9 +395,8 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 					) {
 
 					promoteToMultiline(
-						cand, astCand,
-						postIndent+tab, limit,
-						fset, lines, tab,
+						ctx, cand, astCand,
+						postIndent+tab, limit, tab,
 					)
 					return layoutSymmetric, nil
 				}
@@ -389,68 +404,202 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 		}
 	}
 
-	// 2c. SYMMETRY LAW: canonical symmetric (step 2) and last-arg
-	//     promotion (step 2b) both failed — most commonly because the
-	//     closing line wouldn't fit when the call has trailing args
-	//     after the container. In that case, if the SOURCE already
-	//     has a valid multi-line layout with a multi-line container
-	//     arg and every line fits, preserve it. The doc puts symmetry
-	//     above argument repack, so the "wrapped-symmetric / middle-
-	//     container" form gofmt naturally produces here:
-	//
-	//         backendCall(
-	//             t, &Req{
-	//                 ...
-	//             }, &Resp{},
-	//             fn, shortTimeout,
-	//         )
-	//
-	//     must win over R4's verbose one-arg-per-line pack. Without
-	//     this gate, --optimize would erase the wrapped symmetric form
-	//     in favour of a strictly worse pack layout.
-	if hasMultiLineContainerArg(call) &&
-		allCallLinesFit(ctx, astCall, limit, tab) &&
-		fset.Position(astCall.Pos()).Line !=
-			fset.Position(astCall.End()).Line {
-
-		return layoutPreserve, nil
-	}
-
-	// 3. Fall back to packed verbose layout. If the last arg is itself
-	//    a multi-line container, swap its (effectively-infinite) width
-	//    for its open-token width so the packer can correctly evaluate
-	//    "do the outer args + container-open fit on a continuation
-	//    line?". When they do, packLayout returns no breaks and the
-	//    apply step produces the wrapped-symmetric form — outer args
-	//    inline on a continuation, container opens at end of that
-	//    line, internals follow on deeper continuations.
-	if n >= 1 {
-		if isMultiLineContainer(call.Args[n-1]) {
-			if w := openTokenWidth(
-				fset, lines, astCall.Args[n-1], tab,
-			); w > 0 {
-
-				widths[n-1] = w
-			}
-		}
-	}
+	// Pack continuation lines around the opening and closing lines of
+	// multi-line arguments. Their bodies do not consume horizontal space
+	// on either line, so a closure in the middle can share both lines
+	// with adjacent arguments.
 	contIndent := lineIndentAt(fset, lines, astCall.Pos(), tab) + tab
-	contBudget := limit - contIndent
-	breaks := packLayout(widths, contBudget, contBudget, 1)
+	breaks := packCallArgs(ctx, astCall, call, contIndent, limit, tab)
 	return layoutPack, breaks
 }
 
-// hasMultiLineContainerArg reports whether any arg of call is a multi-line
-// container (composite literal, closure, nested call, or &Composite). Used
-// by R4 to short-circuit on layouts the doc's symmetry law requires us to
-// preserve — see the call-site comment for the "symmetry law" rationale.
-func hasMultiLineContainerArg(call *dst.CallExpr) bool {
-	for _, arg := range call.Args {
-		if isMultiLineContainer(arg) {
-			return true
+// packCallArgs greedily packs wrapped arguments. A multi-line container has
+// separate opening and closing widths: packing resumes after its closing
+// token, at the same indentation as its opening line.
+func packCallArgs(ctx *Context, ac *ast.CallExpr, call *dst.CallExpr,
+	indent, limit, tab int) []int {
+
+	fset, lines := ctx.FileSet, ctx.SourceLines
+	budget := limit - indent
+	line := 0
+	var breaks []int
+	for i, arg := range ac.Args {
+		first := sourceWidth(fset, lines, arg.Pos(), arg.End(), tab)
+		last := first
+		multi := false
+		if openTokenWidth(fset, lines, arg, tab) > 0 &&
+			(first >= wideForcedBreak ||
+				isMultiLineContainer(call.Args[i])) {
+
+			multi = true
+			if first >= wideForcedBreak {
+				// Everything after the argument's start belongs
+				// to its opening line. The closing line's
+				// indentation will follow the newly packed
+				// opening line.
+				pos := fset.Position(arg.Pos())
+				end := arg.Pos() + token.Pos(
+					len(lines[pos.Line-1])-pos.Column+1,
+				)
+				first = sourceWidth(
+					fset, lines, arg.Pos(), end, tab,
+				)
+				last = visualCol(
+					fset, lines, arg.End(), tab,
+				) - lineIndentAt(
+					fset, lines, arg.End(), tab,
+				)
+			} else {
+				// R7 may already have expanded a composite that
+				// occupied one source line.
+				first = openTokenWidth(fset, lines, arg, tab)
+				last = 1
+			}
+		}
+		if i == len(ac.Args)-1 && call.Ellipsis {
+			last += 3
+			if !multi {
+				first += 3
+			}
+		}
+		sep := 2 // ", " between arguments
+		if i == 0 {
+			sep = 0
+		}
+		trail := 1 // trailing comma on a packed argument line
+		if multi {
+			trail = 0 // the opening line continues inside the arg
+		}
+		if i > 0 && line+sep+first+trail > budget {
+			breaks = append(breaks, i)
+			line = first
+		} else {
+			line += sep + first
+		}
+		if multi {
+			line = last
 		}
 	}
-	return false
+	return breaks
+}
+
+// validCallLayout accepts single-line calls, fully wrapped calls, and the
+// inline symmetry exception. Width is checked separately. Arguments of a
+// fully wrapped call must start after '(' and end before the closing line.
+func validCallLayout(ctx *Context, call *ast.CallExpr, tab int) bool {
+	fset, lines := ctx.FileSet, ctx.SourceLines
+	start := fset.Position(call.Lparen).Line
+	end := fset.Position(call.Rparen).Line
+	if start == end {
+		return true
+	}
+	if lineIndentAt(fset, lines, call.Pos(), tab) !=
+		lineIndentAt(fset, lines, call.Rparen, tab) {
+
+		return false
+	}
+	wrapped := true
+	for _, arg := range call.Args {
+		if fset.Position(arg.Pos()).Line <= start ||
+			fset.Position(arg.End()).Line >= end {
+
+			wrapped = false
+			break
+		}
+	}
+	return wrapped || inlineSymmetricCall(ctx, call, tab, true)
+}
+
+// inlineSymmetricCall follows a sequence of containers whose opening and
+// closing lines have the call's indentation. A closing line may open the next
+// container, as in append([]byte{...}, repeat([]byte{...}, count)...).
+// Wrapped nested calls are structurally valid, but may still benefit from
+// repacking during optimization. allowWrappedNested distinguishes those uses.
+func inlineSymmetricCall(ctx *Context, call *ast.CallExpr, tab int,
+	allowWrappedNested bool) bool {
+
+	fset, lines := ctx.FileSet, ctx.SourceLines
+	start := fset.Position(call.Lparen).Line
+	end := fset.Position(call.Rparen).Line
+	if start == end ||
+		lineIndentAt(fset, lines, call.Pos(), tab) !=
+			lineIndentAt(fset, lines, call.Rparen, tab) {
+
+		return false
+	}
+	found := false
+	line := start
+	indent := lineIndentAt(fset, lines, call.Pos(), tab)
+	for _, arg := range call.Args {
+		first := fset.Position(arg.Pos()).Line
+		last := fset.Position(arg.End()).Line
+		if first != line {
+			return false
+		}
+		if first == last {
+			continue
+		}
+		if lineIndentAt(fset, lines, arg.End(), tab) != indent {
+			return false
+		}
+		found = true
+		line = last
+		for {
+			u, ok := arg.(*ast.UnaryExpr)
+			if !ok {
+				break
+			}
+			arg = u.X
+		}
+		switch x := arg.(type) {
+		case *ast.CallExpr:
+			if allowWrappedNested {
+				if !validCallLayout(ctx, x, tab) {
+					return false
+				}
+			} else if !inlineSymmetricCall(ctx, x, tab, false) {
+				return false
+			}
+
+		case *ast.CompositeLit:
+			if fset.Position(containerOpening(
+				fset, x,
+			)).Line != first {
+
+				return false
+			}
+			literalLine := fset.Position(x.Lbrace).Line
+			if literalLine != first && lineIndentAt(
+				fset, lines, x.Lbrace, tab,
+			) != indent {
+
+				return false
+			}
+			for _, elt := range x.Elts {
+				if literalLine != last &&
+					fset.Position(elt.End()).Line >= last {
+
+					return false
+				}
+			}
+
+		case *ast.FuncLit:
+			if x.Body == nil ||
+				fset.Position(x.Body.Lbrace).Line != first {
+
+				return false
+			}
+			for _, stmt := range x.Body.List {
+				if fset.Position(stmt.End()).Line >= last {
+					return false
+				}
+			}
+
+		default:
+			return false
+		}
+	}
+	return found && line == end
 }
 
 // promotableContainer reports whether expr is a single-line call / composite
@@ -534,26 +683,21 @@ func promotedContainerFits(expr ast.Expr, contIndent, limit int,
 // arg line. The last inner element gets After=NewLine so the container's
 // close token rides the outer call's closing ")" on a shared line (the
 // "})" / "))" pattern).
-func promoteToMultiline(cand dst.Expr, astCand ast.Expr,
-	contIndent, limit int, fset *token.FileSet, lines [][]byte, tab int) {
+func promoteToMultiline(ctx *Context, cand dst.Expr, astCand ast.Expr,
+	contIndent, limit, tab int) {
 
+	fset, lines := ctx.FileSet, ctx.SourceLines
 	switch x := cand.(type) {
 	case *dst.CallExpr:
 		ac, ok := astCand.(*ast.CallExpr)
 		if !ok || len(x.Args) == 0 {
 			return
 		}
-		widths := argWidths(fset, lines, ac.Args, tab)
-		contBudget := limit - contIndent
-		breaks := packLayout(widths, contBudget, contBudget, 1)
-		clearArgDecorations(x.Args)
-		x.Args[0].Decorations().Before = dst.NewLine
-		for _, i := range breaks {
-			if i >= 0 && i < len(x.Args) {
-				x.Args[i].Decorations().Before = dst.NewLine
-			}
+		breaks := packCallArgs(ctx, ac, x, contIndent, limit, tab)
+		for _, arg := range x.Args {
+			ctx.ReflowedArgs[arg] = true
 		}
-		x.Args[len(x.Args)-1].Decorations().After = dst.NewLine
+		applyCallLayout(x, breaks, true)
 
 	case *dst.CompositeLit:
 		ac, ok := astCand.(*ast.CompositeLit)
@@ -588,9 +732,54 @@ func promoteToMultiline(cand dst.Expr, astCand ast.Expr,
 			return
 		}
 		promoteToMultiline(
-			x.X, au.X, contIndent, limit, fset, lines, tab,
+			ctx, x.X, au.X, contIndent, limit, tab,
 		)
 	}
+}
+
+// containerOpening locates the first container that can introduce a line
+// break. An anonymous type can open before the composite's value literal:
+// struct { ... }{ ... } starts at the type's brace, not the value's brace.
+func containerOpening(fset *token.FileSet, expr ast.Expr) token.Pos {
+	switch x := expr.(type) {
+	case *ast.CompositeLit:
+		opening := x.Lbrace
+		if x.Type != nil && fset.Position(x.Pos()).Line !=
+			fset.Position(x.Lbrace).Line {
+
+			// Inspect the type so arrays and maps containing an
+			// anonymous struct type use the same opening rule.
+			ast.Inspect(x.Type, func(n ast.Node) bool {
+				var fields *ast.FieldList
+				switch t := n.(type) {
+				case *ast.StructType:
+					fields = t.Fields
+
+				case *ast.InterfaceType:
+					fields = t.Methods
+				}
+				if fields != nil && fields.Opening.IsValid() &&
+					fields.Opening < opening {
+
+					opening = fields.Opening
+				}
+				return true
+			})
+		}
+		return opening
+
+	case *ast.CallExpr:
+		return x.Lparen
+
+	case *ast.FuncLit:
+		if x.Body != nil {
+			return x.Body.Lbrace
+		}
+
+	case *ast.UnaryExpr:
+		return containerOpening(fset, x.X)
+	}
+	return token.NoPos
 }
 
 // openTokenWidth returns the visual width of an expression's "opening token"
@@ -602,22 +791,7 @@ func promoteToMultiline(cand dst.Expr, astCand ast.Expr,
 func openTokenWidth(fset *token.FileSet, lines [][]byte, expr ast.Expr,
 	tab int) int {
 
-	var lbrace token.Pos
-	switch x := expr.(type) {
-	case *ast.CompositeLit:
-		lbrace = x.Lbrace
-
-	case *ast.CallExpr:
-		lbrace = x.Lparen
-
-	case *ast.FuncLit:
-		if x.Body != nil {
-			lbrace = x.Body.Lbrace
-		}
-
-	case *ast.UnaryExpr:
-		return openTokenWidth(fset, lines, x.X, tab)
-	}
+	lbrace := containerOpening(fset, expr)
 	if !lbrace.IsValid() {
 		return 0
 	}
@@ -630,8 +804,21 @@ func openTokenWidth(fset *token.FileSet, lines [][]byte, expr ast.Expr,
 	return w + 1
 }
 
-func applyCallLayout(call *dst.CallExpr, breaks []int, multiLine bool) {
+// clearCallArgLayout clears wrapping around arguments, including a newline
+// after the variadic ellipsis. Comments remain attached to their tokens.
+func clearCallArgLayout(call *dst.CallExpr) {
 	clearArgDecorations(call.Args)
+	decs := call.Decs.Ellipsis[:0]
+	for _, dec := range call.Decs.Ellipsis {
+		if dec != "\n" {
+			decs = append(decs, dec)
+		}
+	}
+	call.Decs.Ellipsis = decs
+}
+
+func applyCallLayout(call *dst.CallExpr, breaks []int, multiLine bool) {
+	clearCallArgLayout(call)
 	if !multiLine {
 		return
 	}
@@ -646,8 +833,13 @@ func applyCallLayout(call *dst.CallExpr, breaks []int, multiLine bool) {
 	}
 
 	// Close paren on its own line — flag via After on the last arg, which
-	// gofmt translates to "trailing comma + ) on next line".
-	call.Args[len(call.Args)-1].Decorations().After = dst.NewLine
+	// gofmt translates to "trailing comma + ) on next line". A variadic
+	// call needs the break after '...', which follows the last arg node.
+	if call.Ellipsis {
+		call.Decs.Ellipsis.Append("\n")
+	} else {
+		call.Args[len(call.Args)-1].Decorations().After = dst.NewLine
+	}
 }
 
 // applyFormattingCallLayout implements R5: split the format string with "+" at
@@ -824,15 +1016,20 @@ func allCallLinesFit(ctx *Context, call *ast.CallExpr, limit, tab int) bool {
 	// an arg sharing those lines is still accounted for.
 	type lineRange struct{ lo, hi int }
 	var argSpans []lineRange
+	argBoundaries := make(map[int]int)
 	for _, a := range call.Args {
 		s := fset.Position(a.Pos()).Line
 		e := fset.Position(a.End()).Line
+		argBoundaries[s]++
 		if e > s {
+			argBoundaries[e]++
 			argSpans = append(argSpans, lineRange{s, e})
 		}
 	}
 	inArgBody := func(ln int) bool {
-		if ln == startLine || ln == endLine {
+		// A line shared by arguments belongs to this call's packing
+		// even if it also opens or closes a multi-line container.
+		if ln == startLine || ln == endLine || argBoundaries[ln] > 1 {
 			return false
 		}
 		for _, r := range argSpans {

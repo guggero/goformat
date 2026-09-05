@@ -43,6 +43,14 @@ func Format(src []byte, filename string,
 	// unforeseen oscillation (it degrades to "best effort", never hangs).
 	const maxFormatIterations = 6
 
+	if cfg.Rules.DeclarationGroupingOn() {
+		var err error
+		src, err = collectDeclarations(src, filename)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	cur := src
 	var diags []diag.Diagnostic
 	for i := 0; i < maxFormatIterations; i++ {
@@ -63,6 +71,7 @@ func Format(src []byte, filename string,
 func formatOnce(src []byte, filename string,
 	cfg *config.Config) ([]byte, []diag.Diagnostic, error) {
 
+	src, protected := protectSource(src)
 	fset := token.NewFileSet()
 	astFile, err := parser.ParseFile(
 		fset, filename, src, parser.ParseComments,
@@ -80,6 +89,7 @@ func formatOnce(src []byte, filename string,
 	}
 
 	ctx := &Context{
+		Protected:             protected,
 		Filename:              filename,
 		Config:                cfg,
 		FileSet:               fset,
@@ -94,6 +104,7 @@ func formatOnce(src []byte, filename string,
 		),
 		NolintFuncs:  mapFuncDecls(dec, prep.nolintFuncs),
 		OuterHandled: map[*dst.CallExpr]bool{},
+		ReflowedArgs: map[dst.Expr]bool{},
 	}
 
 	var diags []diag.Diagnostic
@@ -105,9 +116,28 @@ func formatOnce(src []byte, filename string,
 	if err := decorator.Fprint(&buf, dstFile); err != nil {
 		return nil, nil, fmt.Errorf("%s: print: %w", filename, err)
 	}
-	out := buf.Bytes()
+	out, err := restoreSource(buf.Bytes(), protected)
+	if err != nil {
+		return nil, nil, err
+	}
 
+	// AST diagnostics use the marked input positions. Remove the temporary
+	// marker lines before adding diagnostics measured on the final output.
+	for i := range diags {
+		line := diags[i].Line
+		for _, p := range protected {
+			if line > p.lines.end {
+				diags[i].Line -= 4
+			}
+		}
+	}
 	nolintRanges := nolintOutputRanges(out)
+	for _, r := range noformatRanges(out) {
+		nolintRanges = append(nolintRanges, lineRange{
+			bytes.Count(out[:r.start], []byte("\n")) + 1,
+			bytes.Count(out[:r.end-1], []byte("\n")) + 1,
+		})
+	}
 	diags = append(
 		diags, checkLineLength(filename, out, cfg, nolintRanges)...,
 	)

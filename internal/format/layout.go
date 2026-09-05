@@ -8,8 +8,8 @@ import (
 )
 
 // layout.go owns the "pack args greedily, fill each line up to the limit" logic
-// used by R3 and R4. The two rules share width measurement and the greedy
-// packer; they differ in where args attach (R3 packs from the func line; R4
+// used by R3 and R4. The two rules share width measurement;
+// they differ in where args attach (R3 packs from the func line; R4
 // puts all args on continuation lines with close paren on its own line) and
 // what trails the last param/arg.
 //
@@ -60,13 +60,13 @@ func clamp(v, lo, hi int) int {
 // firstBudget is the available width on the first line BEFORE the first arg
 // starts (i.e. limit - first_arg_start_col). contBudget is the same for
 // continuation lines. trailingLast is the width of whatever follows the last
-// arg on its closing line — for R3 that's the rendered ") (returns) {" tail,
-// for R4 with close on its own line it's just the trailing comma.
+// arg on its closing line — for R4 with close on its own line it's just the
+// trailing comma. R3 uses packFuncDef to handle parameter/result boundaries.
 //
 // The trailing constraint applies only to the LAST line. Middle lines just need
 // room for their ", " separator. Treating every line as last-line would break
 // the pack earlier than necessary and produce suboptimally-spread output (see
-// R3 multi-param tests).
+// multi-argument layouts).
 func packLayout(widths []int, firstBudget, contBudget, trailingLast int) []int {
 	if len(widths) == 0 {
 		return nil
@@ -186,4 +186,55 @@ func postCallLineWidth(fset *token.FileSet, lines [][]byte, pos token.Pos,
 	line := lines[p.Line-1]
 	startCol := clamp(p.Column-1, 0, len(line))
 	return visualWidth(line[startCol:], tab)
+}
+
+// callArgPosition measures an argument's column and line indentation after
+// call reflow. It includes packed preceding arguments and resumes at the
+// closing line of multi-line arguments. Directly nested calls inherit their
+// parent's new position instead of using stale source columns.
+func callArgPosition(ctx *Context, call *dst.CallExpr, target dst.Expr,
+	parents map[dst.Node]dst.Node, tab int) (col, indent int) {
+
+	fset, lines := ctx.FileSet, ctx.SourceLines
+	ac, ok := ctx.Decorator.Ast.Nodes[call].(*ast.CallExpr)
+	if !ok {
+		return
+	}
+	callCol := visualCol(fset, lines, ac.Pos(), tab)
+	callIndent := lineIndentAt(fset, lines, ac.Pos(), tab)
+	if ctx.ReflowedArgs[call] {
+		if parent, ok := parents[call].(*dst.CallExpr); ok {
+			callCol, callIndent = callArgPosition(
+				ctx, parent, call, parents, tab,
+			)
+		}
+	}
+	col = callCol + sourceWidth(
+		fset, lines, ac.Fun.Pos(), ac.Fun.End(), tab,
+	) + 1
+	indent = callIndent
+	for i, arg := range call.Args {
+		if hasNewLineBefore(arg) {
+			indent = callIndent + tab
+			col = indent
+		} else if i > 0 {
+			col += 2 // ", " between packed arguments
+		}
+		if arg == target {
+			return
+		}
+		aa := ac.Args[i]
+		width := sourceWidth(fset, lines, aa.Pos(), aa.End(), tab)
+		if width >= wideForcedBreak {
+			col = indent + visualCol(fset, lines, aa.End(), tab) -
+				lineIndentAt(fset, lines, aa.End(), tab)
+		} else if isMultiLineContainer(arg) {
+			// A container expanded since parsing ends with its
+			// closing token at its opening line's indentation.
+			col = indent + 1
+		} else {
+			col += width
+		}
+	}
+	return
 }

@@ -40,8 +40,8 @@ var Long = "` + strings.Repeat("x", 100) + `"
 		t.Fatalf("want 1 R10 diagnostic, got %d (all diags: %v)",
 			len(r10), diags)
 	}
-	if r10[0].Line != 3 {
-		t.Errorf("R10 on line %d, want 3", r10[0].Line)
+	if r10[0].Line != 4 {
+		t.Errorf("R10 on line %d, want 4", r10[0].Line)
 	}
 }
 

@@ -1,5 +1,10 @@
 package r4
 
+var (
+	argument1, argument2, argument3, argument4, argument5, argument6 int
+	argument7                                                        int
+)
+
 func main() {
 	result := someLongFunction(
 		argument1, argument2, argument3, argument4, argument5,
@@ -11,8 +16,3 @@ func main() {
 func someLongFunction(a, b, c, d, e, f, g int) int {
 	return a + b + c + d + e + f + g
 }
-
-var (
-	argument1, argument2, argument3, argument4, argument5, argument6 int
-	argument7                                                        int
-)

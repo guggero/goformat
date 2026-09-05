@@ -12,7 +12,9 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-const FileName = "goformat.toml"
+const (
+	FileName = "goformat.toml"
+)
 
 type Config struct {
 	LineLength   int  `toml:"line_length"`
@@ -23,10 +25,13 @@ type Config struct {
 	// code that already fits within LineLength and is structurally valid
 	// (collapsing a multi-line call onto one line, repacking one-arg-per-
 	// line layouts tighter, joining/repacking string concats that break
-	// early, re-imposing symmetry on fitting code, compacting comments that
-	// already fit). When false (the default) goformat only performs HARD
+	// early, compacting valid call layouts, compacting comments that
+	// already fit). Invalid call layouts are always corrected, including
+	// partial wrapping that violates indentation symmetry. When false
+	// (the default) goformat only performs HARD
 	// fixes: it reformats a construct solely to resolve an over-limit line
-	// or a required non-space structural rule (mandatory blank lines, etc.).
+	// or a required non-space structural rule (mandatory blank lines,
+	// etc.).
 	Optimize bool `toml:"optimize"`
 
 	FormattingFuncs     []string `toml:"formatting_funcs"`
@@ -59,6 +64,7 @@ type Config struct {
 // in TOML" is distinguishable from "explicitly false". An unset rule defaults
 // to enabled.
 type Rules struct {
+	DeclarationGrouping    *bool `toml:"declaration_grouping"`
 	SwitchCaseSpacing      *bool `toml:"switch_case_spacing"`
 	FuncSignatureBodyBlank *bool `toml:"func_signature_body_blank"`
 	FuncDefWrap            *bool `toml:"func_def_wrap"`
@@ -79,6 +85,10 @@ func boolOr(p *bool, def bool) bool {
 		return def
 	}
 	return *p
+}
+
+func (r Rules) DeclarationGroupingOn() bool {
+	return boolOr(r.DeclarationGrouping, true)
 }
 
 func (r Rules) SwitchCaseSpacingOn() bool {

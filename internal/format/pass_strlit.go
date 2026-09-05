@@ -61,7 +61,7 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 
 	dstutil.Apply(ctx.File, func(c *dstutil.Cursor) bool {
 		node := c.Node()
-		if ctx.SkipNolintDecl(node) {
+		if ctx.SkipFormatting(node) {
 			return false
 		}
 		expr, ok := node.(dst.Expr)
@@ -102,6 +102,7 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 		//     over the limit (prep marked it). Touching short
 		//     unproblematic strings everywhere would be a regression.
 		_, isConcat := expr.(*dst.BinaryExpr)
+		reflowed := ctx.ReflowedArgs[expr]
 		srcAllFits := false
 		if isConcat {
 			if astN, ok := ctx.Decorator.Ast.Nodes[expr]; ok {
@@ -117,14 +118,16 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 			// when every source line already fits: rejoining can
 			// push the line over the limit via gofmt's alignment
 			// padding, and the next run re-splits — oscillation.
-			if srcAllFits &&
+			if srcAllFits && !reflowed &&
 				insideLayoutFragileParent(parents, expr) {
 
 				return true
 			}
 		} else {
 			lit := expr.(*dst.BasicLit)
-			if _, marked := ctx.StringsToSplit[lit]; !marked {
+			if _, marked := ctx.StringsToSplit[lit]; !marked &&
+				!reflowed {
+
 				return true
 			}
 		}
@@ -233,13 +236,10 @@ func (stringLitWrap) Apply(ctx *Context) []diag.Diagnostic {
 			}
 		}
 
-		// HARD-only by default: when the existing concat already fits
-		// on every line, leave it exactly as the author wrote it.
-		// Re-splitting it (churn, often strictly worse) AND
-		// joining/repacking it into fewer chunks are both SOFT,
-		// space-efficiency changes — only --optimize reflows a concat
-		// that already complies.
-		if curChunkingFits && !ctx.Config.Optimize {
+		// Preserve fitting concatenations by default unless R4 just
+		// reflowed this argument. String reflow is part of that layout
+		// change: an old split may no longer suit the available space.
+		if curChunkingFits && !ctx.Config.Optimize && !reflowed {
 			return true
 		}
 

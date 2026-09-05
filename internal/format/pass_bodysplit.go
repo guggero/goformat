@@ -36,7 +36,7 @@ func (bodySplit) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		switch fn := n.(type) {

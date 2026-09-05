@@ -28,8 +28,9 @@ import (
 //
 // gofmt auto-aligns the trailing types across the spec lines.
 //
-// Scope: only var; only ungrouped specs with a single ValueSpec and no values
-// (no `var x = 1` assignment); only when the original line is over the limit.
+// Scope: var specifications with no values (no `var x = 1` assignment),
+// including declarations collected into a block by R14. Only overlong lines
+// are split.
 // const/type declarations and value-bearing vars are out of scope for v1.
 type varBlockWrap struct{}
 
@@ -46,47 +47,57 @@ func (varBlockWrap) Apply(ctx *Context) []diag.Diagnostic {
 	}
 
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		gd, ok := n.(*dst.GenDecl)
-		if !ok || gd.Tok != token.VAR || gd.Lparen {
+		if !ok || gd.Tok != token.VAR {
 			return true
 		}
-		if len(gd.Specs) != 1 {
-			return true
-		}
-		spec, ok := gd.Specs[0].(*dst.ValueSpec)
-		if !ok {
-			return true
-		}
-		if len(spec.Names) < 2 || len(spec.Values) > 0 ||
-			spec.Type == nil {
+		var specs []dst.Spec
+		for _, original := range gd.Specs {
+			spec := original.(*dst.ValueSpec)
+			astSpec, ok := ctx.Decorator.Ast.Nodes[spec].(*ast.ValueSpec)
+			if !ok || ctx.SkipFormatting(
+				spec,
+			) || len(
+				spec.Names,
+			) < 2 || len(
+				spec.Values,
+			) > 0 || spec.Type == nil || !isSingleLine(
+				ctx.FileSet, astSpec.Type.Pos(),
+				astSpec.Type.End(),
+			) || sourceLineWidth(
+				ctx.FileSet, ctx.SourceLines,
+				astSpec.Pos(), tab,
+			) <= limit {
 
-			return true
+				specs = append(specs, spec)
+				continue
+			}
+			indent := lineIndentAt(
+				ctx.FileSet, ctx.SourceLines, astSpec.Pos(),
+				tab,
+			)
+			if !gd.Lparen {
+				indent += tab
+			}
+			wrapped := wrapVarSpec(
+				ctx, spec, astSpec, limit, tab, indent,
+			)
+			if len(wrapped) > 1 {
+				gd.Lparen = true
+			}
+			specs = append(specs, wrapped...)
 		}
-		astN, ok := ctx.Decorator.Ast.Nodes[gd]
-		if !ok {
-			return true
-		}
-		astGD := astN.(*ast.GenDecl)
-		astSpec := astGD.Specs[0].(*ast.ValueSpec)
-
-		if sourceLineWidth(
-			ctx.FileSet, ctx.SourceLines, astGD.Pos(), tab,
-		) <= limit {
-
-			return true
-		}
-
-		applyVarBlockWrap(ctx, gd, spec, astSpec, limit, tab)
+		gd.Specs = specs
 		return true
 	})
 	return nil
 }
 
-func applyVarBlockWrap(ctx *Context, gd *dst.GenDecl, spec *dst.ValueSpec,
-	astSpec *ast.ValueSpec, limit, tab int) {
+func wrapVarSpec(ctx *Context, spec *dst.ValueSpec,
+	astSpec *ast.ValueSpec, limit, tab, indent int) []dst.Spec {
 
 	nameWidths := make([]int, len(spec.Names))
 	for i, n := range spec.Names {
@@ -102,7 +113,7 @@ func applyVarBlockWrap(ctx *Context, gd *dst.GenDecl, spec *dst.ValueSpec,
 
 	// Per spec line: indent + names + (k-1)*", " + " " + type. Budget for
 	// names + separators: limit - tab - 1 (space) - type.
-	budget := limit - tab - 1 - typeWidth
+	budget := limit - indent - 1 - typeWidth
 	if budget < nameWidths[0] {
 		// Even one name + type won't fit. Wrap anyway; R10 will warn.
 		budget = nameWidths[0]
@@ -110,7 +121,7 @@ func applyVarBlockWrap(ctx *Context, gd *dst.GenDecl, spec *dst.ValueSpec,
 
 	groups := packNamesIntoLines(nameWidths, budget)
 	if len(groups) < 2 {
-		return // packed onto a single line — no improvement.
+		return []dst.Spec{spec}
 	}
 
 	newSpecs := make([]dst.Spec, 0, len(groups))
@@ -122,15 +133,21 @@ func applyVarBlockWrap(ctx *Context, gd *dst.GenDecl, spec *dst.ValueSpec,
 			// Reuse the original type node on the first spec.
 			typExpr = spec.Type
 		} else {
-			typExpr = cloneTypeIdent(spec.Type)
+			typExpr = dst.Clone(spec.Type).(dst.Expr)
 		}
 		ns := &dst.ValueSpec{Names: names, Type: typExpr}
 		newSpecs = append(newSpecs, ns)
 		start = end
 	}
 
-	gd.Specs = newSpecs
-	gd.Lparen = true
+	first := newSpecs[0].(*dst.ValueSpec)
+	last := newSpecs[len(newSpecs)-1].(*dst.ValueSpec)
+	first.Decs = spec.Decs
+	first.Decs.End = nil
+	first.Decs.After = dst.None
+	last.Decs.End = spec.Decs.End
+	last.Decs.After = spec.Decs.After
+	return newSpecs
 }
 
 // packNamesIntoLines greedy-packs name widths into groups such that each
@@ -158,33 +175,4 @@ func packNamesIntoLines(widths []int, budget int) []int {
 	ends = append(ends, len(widths))
 	_ = lineStart
 	return ends
-}
-
-// cloneTypeIdent returns a shallow copy of a type expression suitable for use
-// in a fresh ValueSpec. dst nodes are pointers, so we'd otherwise be sharing
-// the same instance across specs — generally fine for printing, but the safer
-// move is to give each spec its own. We handle the common shapes (Ident,
-// StarExpr-of-Ident, SelectorExpr); for anything else, we fall back to sharing
-// the original — worst-case correctness is the same since dst's printer is a
-// pure read of the tree.
-func cloneTypeIdent(t dst.Expr) dst.Expr {
-	switch x := t.(type) {
-	case *dst.Ident:
-		return &dst.Ident{Name: x.Name}
-
-	case *dst.StarExpr:
-		return &dst.StarExpr{X: cloneTypeIdent(x.X)}
-
-	case *dst.SelectorExpr:
-		if id, ok := x.X.(*dst.Ident); ok {
-			return &dst.SelectorExpr{
-				X:   &dst.Ident{Name: id.Name},
-				Sel: &dst.Ident{Name: x.Sel.Name},
-			}
-		}
-
-	case *dst.ArrayType:
-		return &dst.ArrayType{Elt: cloneTypeIdent(x.Elt)}
-	}
-	return t
 }

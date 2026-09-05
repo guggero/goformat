@@ -1,6 +1,8 @@
 package format
 
 import (
+	"strings"
+
 	"github.com/dave/dst"
 
 	"github.com/guggero/goformat/internal/diag"
@@ -24,7 +26,7 @@ func (stanzaSpacing) Apply(ctx *Context) []diag.Diagnostic {
 		return nil
 	}
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		block, ok := n.(*dst.BlockStmt)
@@ -37,7 +39,21 @@ func (stanzaSpacing) Apply(ctx *Context) []diag.Diagnostic {
 			if decs == nil {
 				continue
 			}
-			if len(decs.Start) == 0 {
+			hasComment := false
+			for _, comment := range decs.Start {
+				if strings.HasPrefix(
+					comment, "//noformat:goformat:",
+				) {
+
+					continue
+				}
+				if strings.HasPrefix(comment, "//") ||
+					strings.HasPrefix(comment, "/*") {
+
+					hasComment = true
+				}
+			}
+			if !hasComment {
 				continue
 			}
 			decs.Before = dst.EmptyLine

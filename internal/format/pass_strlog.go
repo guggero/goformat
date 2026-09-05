@@ -37,7 +37,7 @@ func (structuredLogWrap) Apply(ctx *Context) []diag.Diagnostic {
 
 	var diags []diag.Diagnostic
 	dst.Inspect(ctx.File, func(n dst.Node) bool {
-		if ctx.SkipNolintDecl(n) {
+		if ctx.SkipFormatting(n) {
 			return false
 		}
 		call, ok := n.(*dst.CallExpr)

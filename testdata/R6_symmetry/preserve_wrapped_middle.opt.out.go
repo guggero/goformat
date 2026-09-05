@@ -25,8 +25,8 @@ func test(t int, code, frame string, b backend, shortTimeoutSeconds int) {
 			AccountCode: code,
 			QrPayload:   frame,
 			SessionId:   "s1",
-		}, &SubmitSignedPSBTResponse{},
-		b.SignersSubmitSignedPSBT, shortTimeoutSeconds,
+		}, &SubmitSignedPSBTResponse{}, b.SignersSubmitSignedPSBT,
+		shortTimeoutSeconds,
 	)
 	_ = resp
 }
