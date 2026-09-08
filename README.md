@@ -259,27 +259,55 @@ harness asserts `Format(in) == out` and `Format(out) == out`
 (idempotency). Add a new rule case by dropping a new `.in.go`,
 running `go test … -update`, and reviewing the generated `.out.go`.
 
-## Verify a formatting commit
+## Verify a formatting commit range
 
-Compare the latest commit with its parent using the standalone, standard-library
-checker:
+Compare the combined change between two committed snapshots:
 
 ```sh
-go run ./scripts/check-formatting.go -repo /path/to/repo -path core
+# Verify the net effect of the last three commits:
+goformat -verify-diff HEAD~3..HEAD
+
+# Reversing the endpoints reverses the diff, with the same verdict:
+goformat -verify-diff HEAD..HEAD~3
+
+# Branches, tags, and commit IDs are also accepted:
+goformat -verify-diff main..formatting-branch
 ```
 
-Use `-base <commit>` and `-head <commit>` for another commit range. Paths are
-relative to the target repository root. The checker reads committed files
-without modifying either checkout and exits nonzero when a file needs review.
+Exit **0 with empty output** means every changed file has equivalent Go syntax
+and comments under the comparison rules below. Exit **1** prints differences
+requiring review. Exit **2** reports an error, such as an invalid revision or
+unparsable Go file, on stderr. Empty stdout is evidence of success only together
+with exit 0.
 
-It compares parsed Go syntax while ignoring source locations, trailing commas,
-and literal string splitting/joining. Decoded string bytes must match, including
-whitespace inside strings. Prose comments are compared with whitespace
-normalized; recognized directives and their declaration attachments are checked,
-and cgo preambles must match exactly. Added/deleted files, mode changes, and
-non-Go changes require review. This checks structural equivalence, not arbitrary
-behavioral equivalence or location-dependent behavior such as `runtime.Caller`.
+The command compares the two endpoints directly, including when they are in
+reverse chronological order. It checks the **net change**, not every intermediate
+commit: a semantic change that was subsequently reverted is absent from the
+comparison. Both endpoints must be explicit commits; `A...B` merge-base notation
+is not supported.
 
-Declaration collection changes AST structure and declaration order. The commit
-checker intentionally reports those changes for review; it does not certify
-R14 changes as whitespace-only.
+Verification covers the entire repository, even from a subdirectory, including
+`vendor`, `testdata`, and files excluded by formatter configuration. It reads Git
+objects without changing the working tree, index, or history. It accepts no path
+filters or other flags and does not load `goformat.toml` or run formatting passes.
+
+For modified Go files, output is a complete unified diff of canonical AST JSON;
+its line numbers refer to that representation, not the original Go source.
+Formatting-only files and lines are omitted. String values are shown as escaped
+Go strings so significant whitespace and non-UTF-8 bytes remain visible. Added
+or deleted files, renames, mode/type changes, submodule changes, and non-Go changes
+are always reported for review with their Git patches, even if their text only
+differs in whitespace. No files are silently skipped.
+
+The comparison ignores source locations, trailing commas, and literal string
+splitting/joining. Decoded string bytes must match, including whitespace inside
+strings. Prose comments are compared with whitespace normalized; recognized
+directives and their declaration attachments are checked, and cgo preambles must
+match exactly. Splitting an uninitialized variable name list into specifications
+with the same types and order is accepted (R13).
+
+This establishes structural equivalence under those rules, not arbitrary
+behavioral equivalence. In particular, source-location-dependent behavior such
+as `runtime.Caller` and external tools interpreting ordinary comments are outside
+the claim. Declaration collection changes AST structure and declaration order;
+R14 changes are conservatively reported for review.

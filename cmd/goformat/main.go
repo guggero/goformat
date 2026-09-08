@@ -25,6 +25,11 @@ Modes (exclusive; default: -d):
   -d              print before/after on changed files (default)
   -l              list files that would change
   -check          exit non-zero if any changes needed
+  -verify-diff A..B
+                  compare committed Go syntax across the whole repository
+                  print only non-formatting differences; empty output and
+                  exit 0 means equivalent snapshots (exit 1 for differences)
+                  accepts either endpoint order; no paths or other flags
 
 Options:
   -rule RULES     enable only these rules, overriding config rule toggles
@@ -108,6 +113,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		check = fset.Bool(
 			"check", false, "exit non-zero on any pending change",
 		)
+		verifyDiff = fset.String(
+			"verify-diff", "",
+			"verify formatting-only commit changes",
+		)
 		cfgPath  = fset.String("config", "", "config file path")
 		noConfig = fset.Bool("no-config", false, "ignore config files")
 		explain  = fset.String(
@@ -143,6 +152,27 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	)
 	if err := fset.Parse(args); err != nil {
 		return err
+	}
+
+	// Verification compares committed snapshots independently of formatting
+	// configuration. Reject other flags so no filter can weaken the claim.
+	verifyRequested := false
+	var incompatible []string
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == "verify-diff" {
+			verifyRequested = true
+		} else {
+			incompatible = append(incompatible, "-"+f.Name)
+		}
+	})
+	if verifyRequested {
+		if len(incompatible) != 0 || len(fset.Args()) != 0 {
+			return errors.New(
+				"-verify-diff accepts only a commit range, " +
+					"without paths or other flags",
+			)
+		}
+		return verifyCommitDiff(*verifyDiff, stdout)
 	}
 
 	if *uncommittedOnly && *unstagedOnly {
