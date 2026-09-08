@@ -122,7 +122,7 @@ their compact layout exceptions.
 | R11 | Stanza spacing: blank line before comment-led statements          |                                              |
 | R12 | Body split: single-line function body whose line exceeds limit    |                                              |
 | R13 | Var-block wrap: long `var a,b,c,…T` → `var ( ... )` block         | Var only; no const/type, no value-bearing    |
-| R14 | Collect package constants, then variables, into blocks after imports | Keeps numeric enums and interface assertions in place; preserves initialization order |
+| R14 | Collect package constants, then variables, into blocks after imports | Keeps typed enums and interface assertions in place; preserves initialization order |
 | R15 | Comment reflow: split overlong `//` comments at word boundaries   | Skips tool directives (`//go:`, `//nolint:`, `//line`), block comments, and comments with no internal spaces (URLs, dividers) |
 | R16 | Break long binary expressions after operators                    | Runs before call wrapping |
 
@@ -151,9 +151,10 @@ blocks followed by `var` blocks after imports, even for a single declaration.
 Comments on standalone declarations move inside the collected blocks and reflow
 at their new indentation. Existing blocks with headers remain separate blocks,
 with their headers above them. Local declarations retain their scope. Typed blank-variable assertions stay in place,
-as do const declarations immediately following a numeric type definition whose
-values have that type. Numeric aliases and explicitly typed conversions are
-recognized when their types can be resolved within the file.
+as do const declarations immediately following a type declaration whose values
+have that type, regardless of its underlying representation (including strings
+and booleans). Type aliases and explicitly typed conversions are recognized
+without needing to resolve the underlying type.
 
 Independent `iota` groups remain separate blocks to preserve constant values.
 Variable specification order is preserved. Protected variables and assertions

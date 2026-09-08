@@ -27,7 +27,6 @@ func CollectChangedDeclarations(src []byte, filename string,
 	if err != nil {
 		return nil, err
 	}
-	types := declarationTypes(file)
 	protected := noformatRanges(src)
 	constants, variables := false, false
 	var previous ast.Decl
@@ -56,7 +55,7 @@ func CollectChangedDeclarations(src []byte, filename string,
 			}
 		}
 		if !touched || (gd.Tok == token.CONST && isEnumDeclaration(
-			gd, prev, types,
+			gd, prev,
 		)) {
 
 			continue
@@ -78,21 +77,6 @@ func CollectChangedDeclarations(src []byte, filename string,
 	)
 }
 
-func declarationTypes(file *ast.File) map[string]ast.Expr {
-	types := make(map[string]ast.Expr)
-	for _, declaration := range file.Decls {
-		if gd, ok := declaration.(*ast.GenDecl); ok &&
-			gd.Tok == token.TYPE {
-
-			for _, spec := range gd.Specs {
-				ts := spec.(*ast.TypeSpec)
-				types[ts.Name.Name] = ts.Type
-			}
-		}
-	}
-	return types
-}
-
 // collectDeclarations runs before decoration so relocated documentation gets
 // fresh source positions. It retains specification order, and treats protected
 // declarations and effectful assertions as initialization-order barriers.
@@ -111,7 +95,6 @@ func collectDeclarationsWithOptions(src []byte, filename string,
 	file := fset.File(f.Pos())
 	offset := file.Offset
 	protected := noformatRanges(src)
-	types := declarationTypes(f)
 
 	// Include a trailing comment in a moved declaration's source span.
 	declEnd := func(d ast.Node) int {
@@ -227,7 +210,7 @@ func collectDeclarationsWithOptions(src []byte, filename string,
 			}
 			continue
 		}
-		if gd.Tok == token.CONST && isEnumDeclaration(gd, prev, types) {
+		if gd.Tok == token.CONST && isEnumDeclaration(gd, prev) {
 			continue
 		}
 
@@ -586,42 +569,28 @@ func usesIota(gd *ast.GenDecl) bool {
 	return found
 }
 
-func numericType(expr ast.Expr, types map[string]ast.Expr,
-	seen map[string]bool) bool {
-
-	if p, ok := expr.(*ast.ParenExpr); ok {
-		return numericType(p.X, types, seen)
-	}
-	id, ok := expr.(*ast.Ident)
-	if !ok || seen[id.Name] {
-		return false
-	}
-	if underlying, ok := types[id.Name]; ok {
-		seen[id.Name] = true
-		return numericType(underlying, types, seen)
-	}
-	switch id.Name {
-	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint" +
-		"16", "uint32", "uint64", "uintptr", "byte", "rune", "float32", "float64", "complex64", "complex128":
-		return true
-	}
-	return false
-}
-
-func isEnumDeclaration(gd *ast.GenDecl, previous ast.Decl,
-	types map[string]ast.Expr) bool {
-
+// isEnumDeclaration keeps a constant group beside the type declaration it
+// documents. The association depends on the constants' named type, not its
+// underlying representation, which may be defined in another file or package.
+func isEnumDeclaration(gd *ast.GenDecl, previous ast.Decl) bool {
 	td, ok := previous.(*ast.GenDecl)
 	if !ok || td.Tok != token.TYPE {
 		return false
 	}
+
+	// Every type in the preceding declaration is a candidate. Resolving
+	// underlying types would need package loading and would unnecessarily
+	// exclude string, boolean, and externally defined enum representations.
 	candidates := make(map[string]bool)
 	for _, spec := range td.Specs {
 		ts := spec.(*ast.TypeSpec)
-		if numericType(ts.Type, types, make(map[string]bool)) {
-			candidates[ts.Name.Name] = true
-		}
+		candidates[ts.Name.Name] = true
 	}
+
+	// Require every specification to use one of those types, allowing the
+	// omitted expressions and typed conversions used by enum declarations.
+	// A mixed group with unrelated constants still belongs in the top
+	// section.
 	known := make(map[string]string)
 	inherited := ""
 	for _, spec := range gd.Specs {

@@ -230,8 +230,10 @@ Existing documented blocks stay separate, with their headers above them.
 Local declarations keep their scope.
 
 Typed blank-variable assertions remain in place. Const declarations immediately
-following a numeric type definition remain beside that type when every value
-has that type. Numeric aliases and conversions are recognized within the file.
+following a type declaration remain beside that type when every value has that
+type, regardless of its underlying representation (including strings and
+booleans). Type aliases and conversions are recognized within the file;
+the underlying type need not be resolved.
 Independent iota groups keep separate blocks so their values cannot change.
 
 Variable initialization order is preserved. Protected declarations and
