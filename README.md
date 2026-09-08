@@ -115,7 +115,7 @@ their compact layout exceptions.
 | R4  | Wrap/repack overlong function calls                               | Pack-or-spread; bails on multi-line method chains |
 | R5  | Formatting funcs: split format string with `+`                    | Allow/deny lists configurable; preserves multi-line layouts whose lines already fit |
 | R6  | Indentation symmetry for nested calls                             | Preserve AND produce both inline-symmetric (`f(a, &T{ ... })`) and wrapped-symmetric (`f(\n  a, &T{ ... },\n)`) forms |
-| R7  | Composite-literal reflow                                          | Structs/maps: one element per line. Slices/arrays: greedy pack |
+| R7  | Composite-literal reflow                                          | Multiline structs/maps: one element per line, even when lines fit. Slices/arrays: greedy pack |
 | R8  | Structured-log layout + static-msg lint                           | Name-based detection (TraceS / DebugS / ...) |
 | R9  | String-literal reflow (split, join, re-split)                     | Multi-split, effective-indent-aware, walks dst parents for wrap context |
 | R10 | Warn on lines exceeding the limit                                 | Honors `//nolint:ll`                          |

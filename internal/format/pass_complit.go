@@ -8,8 +8,8 @@ import (
 	"github.com/guggero/goformat/internal/diag"
 )
 
-// compositeLitReflow implements R7: a composite literal whose source line
-// exceeds the limit gets reflowed onto multiple lines.
+// compositeLitReflow implements R7: overlong single-line literals expand, and
+// multiline keyed literals always place each field on its own line.
 //
 //   - Keyed composites (struct & map literals — elts are KeyValueExpr)
 //     get one element per line. The doc forbids packing struct fields
@@ -55,9 +55,14 @@ func (compositeLitReflow) Apply(ctx *Context) []diag.Diagnostic {
 			return true
 		}
 
-		// Already multi-line in source — leave it; the developer has
-		// chosen a layout and reflowing would just churn.
-		if !isSingleLine(ctx.FileSet, astComp.Lbrace, astComp.Rbrace) {
+		// Width alone cannot validate a multiline struct: several short
+		// fields may share a line even though the entire initializer
+		// does not. Enforce field boundaries without repacking slices
+		// or collapsing already multiline literals.
+		if !isSingleLine(ctx.FileSet, astComp.Pos(), astComp.Rbrace) {
+			if isKeyedComposite(comp) {
+				applyStructReflow(comp)
+			}
 			return true
 		}
 
@@ -112,10 +117,18 @@ func isKeyedComposite(comp *dst.CompositeLit) bool {
 // the literal's indent. gofmt's printer takes the rest from the NewLine markers
 // we stamp.
 func applyStructReflow(comp *dst.CompositeLit) {
+	// Existing blank lines separate logical field groups and their
+	// comments. Add only missing boundaries so valid layouts remain
+	// byte-stable.
 	for _, e := range comp.Elts {
-		e.Decorations().Before = dst.NewLine
+		if e.Decorations().Before < dst.NewLine {
+			e.Decorations().Before = dst.NewLine
+		}
 	}
-	comp.Elts[len(comp.Elts)-1].Decorations().After = dst.NewLine
+	last := comp.Elts[len(comp.Elts)-1].Decorations()
+	if last.After < dst.NewLine {
+		last.After = dst.NewLine
+	}
 }
 
 // applySliceReflow lays out a non-keyed composite literal with elements packed

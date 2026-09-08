@@ -131,15 +131,16 @@ own line.`,
 exceeds the limit is reflowed onto multiple lines:
 
   * Keyed composites — struct & map literals (KeyValueExpr elts) — get
-    ONE element per line. Packing struct fields across lines is
-    forbidden by the doc (ruins git-diff hygiene).
+    ONE element per line. This also applies to literals already spanning
+    multiple lines, even when every existing line fits. Multiple fields
+    may share a line only when the whole initializer fits on one line.
   * Non-keyed composites — array & slice literals — pack elements
     greedy-style like function args, filling each line up to the limit.
 
 R7 runs before R4 so the call-wrap pass sees R7-reflowed composites as
 multi-line containers and can emit the inline-symmetric form
-("append(slice, &T{ ... })"). Multi-line composites in source are left
-alone — the developer's chosen layout is preserved.`,
+("append(slice, &T{ ... })"). Existing blank lines and field comments are
+preserved. Multi-line non-keyed composites retain their chosen packing.`,
 		},
 		{
 			ID:    "R8",

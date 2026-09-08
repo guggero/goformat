@@ -3,7 +3,9 @@ package r6
 func test() {
 	consume(tpl, &struct {
 		Value string
-	}{Value: "value"})
+	}{
+		Value: "value",
+	})
 	consume(tpl, struct {
 		Value string
 	}{})

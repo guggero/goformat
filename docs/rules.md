@@ -103,15 +103,16 @@ handled.
 
 ## R7 — composite-literal reflow
 **File:** `pass_complit.go`
-**What:** Reflows a composite literal whose source span has ANY line over
-the limit:
+**What:** Expands overlong single-line literals and enforces separate fields
+in multiline keyed literals:
 - **Keyed** composites (struct & map, `KeyValueExpr` elts) → one element
-  per line (doc forbids packing struct fields).
+  per line. Multiple fields may share a line only when the whole initializer
+  fits on one line. This applies even when every existing line fits the limit.
 - **Non-keyed** (slice/array) → pack elements greedily up to the limit.
-**Detection:** `anyCompositeLineOverLimit` walks every source line from
-Lbrace.Line to Rbrace.Line. Was originally only single-line composites;
-extended to multi-line because packed-but-overlong inner lines need
-reflow too.
+**Detection:** Check whether the literal spans multiple source lines and whether
+its elements are keyed. Multiline keyed literals get missing field boundaries;
+existing blank lines and comments remain. Single-line literals expand when their
+source line exceeds the limit. Multiline non-keyed literals retain their packing.
 **Order:** Before R4 so R4 sees the reflowed composite as a multi-line
 container and can apply layoutSymmetric.
 

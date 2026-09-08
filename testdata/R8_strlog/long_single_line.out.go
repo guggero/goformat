@@ -3,7 +3,9 @@ package r8
 var (
 	log = struct {
 		InfoS func(ctx Context, msg string, args ...any)
-	}{InfoS: func(ctx Context, msg string, args ...any) {}}
+	}{
+		InfoS: func(ctx Context, msg string, args ...any) {},
+	}
 	slog = struct {
 		Int    func(k string, v int) any
 		String func(k string, v string) any
