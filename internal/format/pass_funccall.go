@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dave/dst"
+	"github.com/dave/dst/decorator"
 
 	"github.com/guggero/goformat/internal/diag"
 )
@@ -28,6 +29,9 @@ type funcCallWrap struct{}
 
 func (funcCallWrap) Name() string { return "R4" }
 
+// Apply repairs call layout violations and optionally compacts fitting calls.
+// Nested calls retain structural checks even when outer reflow has made their
+// source columns unsuitable for width-only layout decisions.
 func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 	r4On := ctx.Config.Rules.FuncCallWrapOn()
 	r5On := ctx.Config.Rules.FormattingFnCompactOn()
@@ -52,9 +56,6 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 		}
 		call, ok := n.(*dst.CallExpr)
 		if !ok {
-			return true
-		}
-		if ctx.OuterHandled[call] {
 			return true
 		}
 		if len(call.Args) == 0 {
@@ -117,6 +118,15 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 			isStructuredLogCall(astCall, logMethods)
 		needsLayoutFix := !formattingCall && !structuredCall &&
 			!validCallLayout(ctx, astCall, tab)
+
+		// Outer reflow invalidates source columns, so defer width-only
+		// decisions for nested calls. Structural violations still
+		// need repair: packing the outer arguments does not complete
+		// a partially wrapped inner call's opening and closing lines.
+		if ctx.OuterHandled[call] && !needsLayoutFix {
+			return true
+		}
+
 		linesFit := allCallLinesFit(ctx, astCall, limit, tab)
 		if !ctx.Config.Optimize && linesFit && !needsLayoutFix {
 
@@ -219,14 +229,13 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 			markInnerCallsHandled(ctx.OuterHandled, call)
 
 		case layoutPreserve:
-			// Source already uses a valid symmetric / wrapped-
-			// symmetric layout with a multi-line container arg
-			// and all lines fit. Don't touch outer decorations —
-			// the existing layout is the doc's preferred shape.
-			// Mark inner calls so R4 doesn't descend and undo
-			// inner layouts whose positions are interpreted in
-			// the same way (each inner is its own preserve/pack
-			// decision, no nested chaos).
+			// Preserve an already compact layout, or a valid
+			// fitting layout that symmetry cannot shorten. Keeping
+			// ties as written avoids moving line breaks without
+			// saving space. Mark inner calls so R4 doesn't descend
+			// and undo inner layouts whose positions are
+			// interpreted in the same way (each inner is its own
+			// preserve/pack decision, no nested chaos).
 			markInnerCallsHandled(ctx.OuterHandled, call)
 		}
 		return true
@@ -241,9 +250,12 @@ const (
 	layoutCollapse  layoutKind = iota // single-line fits the limit
 	layoutSymmetric                   // last arg is a multi-line container; outer args inline
 	layoutPack                        // packed continuation lines, ')' on own line
-	layoutPreserve                    // source layout is symmetric-form and fits; leave alone
+	layoutPreserve                    // fitting layout needs no more compaction
 )
 
+// decideCallLayout selects a fitting call layout. Symmetry may repair invalid
+// or overlong calls, but replaces a valid fitting layout only if it saves
+// lines.
 func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 	limit, tab int) (layoutKind, []int) {
 
@@ -328,6 +340,14 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 			postLine += 1 // outer ")"
 
 			if preLine <= limit && postLine <= limit {
+				if !preferSymmetricLayout(
+					ctx, astCall, call, containerIdx,
+					postIndent+tab, limit, tab,
+				) {
+
+					return layoutPreserve, nil
+				}
+
 				// Re-pack the container's inner content. Its
 				// layout may be stale (e.g. each arg on its
 				// own line from a prior R4 pack-form layout)
@@ -350,14 +370,15 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 	// 2b. No EXISTING multi-line container fit (or none was present).
 	//     Try PROMOTING the LAST arg — if it's a single-line container
 	//     (call / composite / &Composite) — to multi-line and then
-	//     applying the symmetric layout. Per the doc, symmetry beats
-	//     argument re-pack:
+	//     applying the symmetric layout. Symmetry can repair an overlong
+	//     call or reduce the line count of an existing valid layout:
 	//
 	//         outerCall(args, innerCall(
 	//             innerArg,
 	//         ))
 	//
-	//     is preferred over the verbose pack
+	//     can replace an overlong call. An already fitting pack with
+	//     the same number of lines is preserved:
 	//
 	//         outerCall(
 	//             args, innerCall(innerArg),
@@ -402,6 +423,14 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 						limit, fset, lines, tab,
 					) {
 
+					if !preferSymmetricLayout(
+						ctx, astCall, call, i,
+						postIndent+tab, limit, tab,
+					) {
+
+						return layoutPreserve, nil
+					}
+
 					promoteToMultiline(
 						ctx, cand, astCand,
 						postIndent+tab, limit, tab,
@@ -419,6 +448,64 @@ func decideCallLayout(ctx *Context, astCall *ast.CallExpr, call *dst.CallExpr,
 	contIndent := lineIndentAt(fset, lines, astCall.Pos(), tab) + tab
 	breaks := packCallArgs(ctx, astCall, call, contIndent, limit, tab)
 	return layoutPack, breaks
+}
+
+// preferSymmetricLayout allows required repairs regardless of line count. For
+// an already valid, fitting call, it previews symmetry and requires fewer
+// rendered lines, preserving the author's layout on ties or measurement errors.
+func preferSymmetricLayout(ctx *Context, ac *ast.CallExpr, call *dst.CallExpr,
+	containerIdx, contIndent, limit, tab int) bool {
+
+	// Line count is a preference, not a reason to retain broken layout.
+	// Default mode already preserves fitting calls before reaching here;
+	// this guard limits the extra rewrites enabled by optimization.
+	if !validCallLayout(ctx, ac, tab) ||
+		!allCallLinesFit(ctx, ac, limit, tab) {
+
+		return true
+	}
+
+	// Preview on independent trees so rejecting a candidate cannot leave
+	// inner argument decorations or reflow bookkeeping behind. Printing
+	// both layouts also accounts for comments, blank lines, and containers
+	// changed by earlier passes without trusting stale source line spans.
+	original := dst.Clone(call).(*dst.CallExpr)
+	candidate := dst.Clone(call).(*dst.CallExpr)
+	preview := *ctx
+	preview.ReflowedArgs = make(map[dst.Expr]bool)
+	promoteToMultiline(
+		&preview, candidate.Args[containerIdx], ac.Args[containerIdx],
+		contIndent, limit, tab,
+	)
+	clearCallArgLayout(candidate)
+
+	before, err := renderedCallLineCount(original)
+	if err != nil {
+		return false
+	}
+	after, err := renderedCallLineCount(candidate)
+	return err == nil && after < before
+}
+
+// renderedCallLineCount prints a detached call in a fixed wrapper. The wrapper
+// contributes the same lines to both candidates, while the standard printer
+// resolves argument decorations and comments as it does in the final output.
+func renderedCallLineCount(call *dst.CallExpr) (int, error) {
+	file := &dst.File{
+		Name: dst.NewIdent("p"),
+		Decls: []dst.Decl{&dst.GenDecl{
+			Tok: token.VAR,
+			Specs: []dst.Spec{&dst.ValueSpec{
+				Names:  []*dst.Ident{dst.NewIdent("_")},
+				Values: []dst.Expr{call},
+			}},
+		}},
+	}
+	var buf bytes.Buffer
+	if err := decorator.Fprint(&buf, file); err != nil {
+		return 0, err
+	}
+	return bytes.Count(buf.Bytes(), []byte{'\n'}), nil
 }
 
 // packCallArgs greedily packs wrapped arguments. A multi-line container has

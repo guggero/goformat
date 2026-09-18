@@ -93,6 +93,12 @@ branch).
 projected pre-line + post-line fit.
 **Container types:** `CompositeLit`, `FuncLit`, `CallExpr`, `UnaryExpr`
 wrapping any of the above (`&Foo{}`).
+**Preference:** For an already valid call whose lines fit, optimization adopts
+symmetry only when it reduces the total rendered line count. Ties and longer
+candidates preserve the original layout, including comments and blank lines.
+This applies both to existing multiline containers and to promotion of a
+single-line nested argument. Required structural and line-length repairs remain
+eligible regardless of line count. Default mode already preserves fitting calls.
 **Important quirk:** When the container is a FuncLit, the symmetric form
 shifts the closure body's effective indent to `(callIndent + tab)`, which
 may be SHALLOWER than the source. R4 measures inner-call wrap decisions
@@ -138,10 +144,10 @@ Three behaviours route through one code path:
   a single literal (subsumes the old "string-join" rule).
 
 **Key helpers:**
-- `countWrappedAncestors` — counts wrap-ancestors that shift the string's
-  effective render column. CallExpr (if `isCallWrapped`) and BinaryExpr
-  (if `subtreeHasNewLineDec` — R16's operator split). Each contributes one
-  tab.
+- `wrapGeometry` — counts wrapped calls and operator-split binary expressions
+  within the string's containing block. Each contributes one tab relative to
+  the outermost such expression's source indentation. Stopping at the block
+  preserves callback-body indentation instead of using its caller's column.
 - `inMultilineContainer` — multi-line CompositeLit / wrapped CallExpr
   ancestor. Used by the "move whole literal onto its own line" path
   (avoids `"Crit"+"icalS"` mid-word splits in slice literals).

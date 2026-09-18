@@ -117,8 +117,10 @@ Anonymous struct literals follow the same rule: in struct { ... }{ ... },
 the type's opening brace starts the first container. An argument before
 it can share that line, both in inline and wrapped calls.
 
-Valid verbose inputs that COULD be symmetric are rewritten with
---optimize; invalid partial wrapping is always corrected. When the
+With --optimize, a valid fitting call is rewritten to symmetry only if
+the result uses fewer total lines. Equal or longer layouts stay as written,
+including a wrapped outer call with a single-line nested argument. Invalid
+partial wrapping and overlong calls are still corrected. When the
 first or closing line wouldn't fit, R4 packs continuation lines around
 the container's opening and closing tokens, with the outer ")" on its
 own line.`,

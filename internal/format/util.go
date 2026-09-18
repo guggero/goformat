@@ -120,9 +120,11 @@ func calleeName(call *ast.CallExpr) string {
 
 // markInnerCallsHandled walks call.Args (the dst tree, since we may have
 // already inserted new BinaryExpr nodes that don't exist in ast) and records
-// every CallExpr descendant in the OuterHandled set. R4 then skips them —
-// their effective column is no longer their source column, so source-column
-// measurement would over-wrap them.
+// every CallExpr descendant in the OuterHandled set. R4 then skips width-only
+// reflow: their effective column is no longer their source column, so measuring
+// from source would over-wrap them. Structurally invalid calls still need
+// repair because wrapping a parent does not fix partially wrapped inner
+// arguments.
 //
 // FuncLit bodies are not descended into: a closure body has its own independent
 // indentation scope, and calls inside it sit on their own source lines that

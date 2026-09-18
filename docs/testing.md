@@ -54,10 +54,18 @@ layout decision. Resist the temptation to paste a 200-line real-world
 function; it makes future test changes hairy and obscures what's being
 tested.
 
+Use `.opt.in.go` / `.opt.out.go` for cases that run with optimization enabled.
+Keep incorrect layout intact in input fixtures; format and check the expected
+output files using the case's mode.
+
 ## Test types
 
 - `format_test.go::TestUnitPairs` — table-driven, walks `testdata/`,
   reads each `.in.go`, formats it, asserts equality with `.out.go`.
+- `format_test.go::TestReflowInvariants` — reads the nested-call and
+  callback-string regression pairs, checking syntax/string-value preservation,
+  absence of diagnostics, and idempotency in both formatting modes. Keep layout
+  examples in the pairs so these additional checks share the readable fixtures.
 - `pass_linelen_test.go` — direct tests for R10's diagnostic emission.
 - `pass_strlog_test.go` — direct tests for R8's lint warnings.
 - `internal/config/*_test.go` — config loading.

@@ -6,9 +6,12 @@ before re-discovering the same bug.
 ## OuterHandled flow
 
 The single most important inter-pass channel. `ctx.OuterHandled` is a
-`map[*dst.CallExpr]bool` populated by outer passes to tell R4 "I've
-already chosen this call's layout, don't touch it." R4 checks
-`if ctx.OuterHandled[call] { return true }` at the top of its loop.
+`map[*dst.CallExpr]bool` populated by outer passes to tell R4 that a call's
+source columns may no longer match its rendered position. R4 skips width-only
+reflow for these calls, but still repairs structural violations in ordinary
+calls. Otherwise an outer pack can repeatedly mark a partially wrapped inner
+call as handled without ever fixing its opening and closing lines. R5 and R8
+retain their compact-layout exceptions.
 
 **Who marks what:**
 
@@ -204,9 +207,15 @@ bug.
 
 R9 uses the leftmost lit's source column as anchor. After R16 splits an
 enclosing chain, the source column is stale — the lit now lives on a
-continuation line. R9 compensates via `countWrappedAncestors`, which
-counts each wrapped CallExpr AND each operator-split BinaryExpr ancestor
-as one tab of indent shift.
+continuation line. R9 compensates via `wrapGeometry`, which counts wrapped
+calls and operator-split binary expressions relative to the outermost such
+ancestor's source indentation, stopping at the containing block.
+
+Do not walk past a callback body into its caller. The body's statements
+already include their block nesting in their source indentation. Anchoring
+at the outer call loses that depth and can join a fitting split string into
+an overlong line. `R9_strlit/callback_indent*` covers preserving the split
+and repairing the overlong joined form, with and without optimization.
 
 **Symptom of regression:** Strings get mid-word-split (`"//n"+"olint:"`)
 when they should fit whole on a continuation line.

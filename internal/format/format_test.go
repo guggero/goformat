@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/guggero/goformat/internal/config"
+	"github.com/guggero/goformat/internal/syntax"
+	"github.com/stretchr/testify/require"
 )
 
 var update = flag.Bool("update", false, "regenerate .out.go golden files")
@@ -57,6 +59,51 @@ func TestUnitPairs(t *testing.T) {
 					"---\n%s", outPath, got, want)
 			}
 		})
+	}
+}
+
+// TestReflowInvariants complements the readable call and string regression
+// pairs with syntax, width, and stability checks. These fixtures only reflow
+// expressions; rules that deliberately regroup declarations need other checks.
+func TestReflowInvariants(t *testing.T) {
+	for _, pattern := range []string{
+		"../../testdata/R4_funccall/nested_partial*.in.go",
+		"../../testdata/R6_symmetry/nested_partial_session*.in.go",
+		"../../testdata/R6_symmetry/symmetry_line_count*.in.go",
+		"../../testdata/R9_strlit/callback_indent*.in.go",
+	} {
+
+		matches, err := filepath.Glob(pattern)
+		require.NoError(t, err)
+		require.NotEmpty(t, matches)
+		for _, in := range matches {
+			t.Run(filepath.Base(in), func(t *testing.T) {
+				// Use the same inputs and mode selection as the
+				// golden tests so the extra assertions cannot
+				// drift away from the documented examples.
+				src, err := os.ReadFile(in)
+				require.NoError(t, err)
+				base := strings.TrimSuffix(
+					filepath.Base(in), ".in.go",
+				)
+				cfg := cfgForPair(base)
+				out, diagnostics, err := Format(src, in, cfg)
+				require.NoError(t, err)
+				require.Empty(t, diagnostics)
+
+				// A visually correct result must also preserve
+				// the program and reach a fixed point. Literal
+				// concatenations are compared by string value.
+				before, err := syntax.Fingerprint(src)
+				require.NoError(t, err)
+				after, err := syntax.Fingerprint(out)
+				require.NoError(t, err)
+				require.Equal(t, string(before), string(after))
+				again, _, err := Format(out, in, cfg)
+				require.NoError(t, err)
+				require.Equal(t, string(out), string(again))
+			})
+		}
 	}
 }
 

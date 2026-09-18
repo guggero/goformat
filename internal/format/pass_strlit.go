@@ -522,13 +522,12 @@ func countWrappedAncestors(node dst.Node, parents map[dst.Node]dst.Node) int {
 }
 
 // wrapGeometry returns how many wrapped ancestors (wrapped CallExprs and
-// operator-broken BinaryExprs) sit above node, and the source-line indent of
-// the OUTERMOST such ancestor. The string's final rendered first-line indent is
-// baseIndent + wraps*tab. Anchoring on the outermost wrapped ancestor's start
-// line — which always sits at the enclosing statement's indent — keeps the
-// result correct whether the wrap is newly applied by R4 this run or was
-// already present in the source (the latter is where using the string's own
-// source line would double-count the wrap indent).
+// operator-broken BinaryExprs) sit above node within its containing block, and
+// the source-line indent of the OUTERMOST such ancestor. The string's final
+// rendered first-line indent is baseIndent + wraps*tab. Anchoring on that
+// ancestor's start line counts both existing and newly applied wraps once.
+// A callback body establishes a separate statement indentation scope, so calls
+// outside its block must not replace that anchor with a shallower source line.
 func wrapGeometry(ctx *Context, node dst.Node,
 	parents map[dst.Node]dst.Node, tab int) (wraps, baseIndent int) {
 
@@ -539,6 +538,15 @@ func wrapGeometry(ctx *Context, node dst.Node,
 		if !ok || parent == nil {
 			break
 		}
+
+		// A block's statements already include their nesting depth in
+		// their source indentation. Continuing through a callback to
+		// its caller would discard the body indent and any intervening
+		// control-flow blocks, allowing strings wider than the limit.
+		if _, isBlock := parent.(*dst.BlockStmt); isBlock {
+			break
+		}
+
 		switch p := parent.(type) {
 		case *dst.CallExpr:
 			if isCallWrapped(p) {

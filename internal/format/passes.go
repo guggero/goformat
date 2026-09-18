@@ -114,7 +114,8 @@ type Context struct {
 	// outer rule (R8 placing it on its own continuation line, R4 wrapping
 	// its parent). The call walker uses source-column measurement, which is
 	// wrong after an outer wrap moves the call to a new column — so the
-	// inner call must be skipped to avoid over-wrapping.
+	// inner call skips width-only reflow to avoid over-wrapping. Structural
+	// violations, such as partially wrapped arguments, still need repair.
 	OuterHandled map[*dst.CallExpr]bool
 
 	// NolintFuncs records FuncDecls whose doc comment contains a `//nolint`
