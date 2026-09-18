@@ -208,13 +208,24 @@ func formatChangedLines(src []byte, path string, cfg *config.Config,
 	if len(selected) == 0 {
 		return src, skipped, nil
 	}
-	original, err := syntax.Fingerprint(src)
+
+	// The opt-in assertion rename is an intentional token change. Compare
+	// both sides after only that narrowly defined normalization so selected
+	// edits can include it without weakening the general syntax guard.
+	fingerprint := func(source []byte) ([]byte, error) {
+		normalized, err := format.OptimizeRequireCalls(source, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return syntax.Fingerprint(normalized)
+	}
+	original, err := fingerprint(src)
 	if err != nil {
 		return nil, false, err
 	}
 	equivalent := func(candidate []byte) bool {
-		fingerprint, err := syntax.Fingerprint(candidate)
-		return err == nil && bytes.Equal(original, fingerprint)
+		result, err := fingerprint(candidate)
+		return err == nil && bytes.Equal(original, result)
 	}
 	candidate := applyLineEdits(src, formatted, selected)
 	if equivalent(candidate) {

@@ -35,7 +35,7 @@ Options:
   -rule RULES     enable only these rules, overriding config rule toggles
                   (repeatable; comma-separated IDs, e.g. -rule R3,R4)
   -optimize       also apply soft, space-efficiency fixes to code that already
-                  fits
+                  fits, and upgrade eligible require messages to f assertions
   -uncommitted-only
                   format only changed hunks relative to HEAD (staged + unstaged)
   -unstaged-only  format only changed hunks relative to the index
@@ -124,8 +124,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		)
 		rules    = fset.Bool("rules", false, "list every rule and exit")
 		optimize = fset.Bool(
-			"optimize", false, "also apply soft, space-efficiency "+
-				"fixes to code that already fits",
+			"optimize", false,
+			"also apply soft, space-efficiency fixes and upgrade "+
+				"eligible require format messages",
 		)
 		uncommittedOnly = fset.Bool(
 			"uncommitted-only", false,

@@ -21,12 +21,14 @@ type Config struct {
 	TabWidth     int  `toml:"tab_width"`
 	Canonicalize bool `toml:"canonicalize"`
 
-	// Optimize enables SOFT fixes: purely space-efficiency reformatting of
+	// Optimize enables SOFT fixes: space-efficiency reformatting of
 	// code that already fits within LineLength and is structurally valid
 	// (collapsing a multi-line call onto one line, repacking one-arg-per-
 	// line layouts tighter, joining/repacking string concats that break
 	// early, compacting valid call layouts, compacting comments that
-	// already fit). Invalid call layouts are always corrected, including
+	// already fit). It also upgrades configured Testify require assertions
+	// with literal format messages and values to their f variants under R5.
+	// Invalid call layouts are always corrected, including
 	// partial wrapping that violates indentation symmetry. When false
 	// (the default) goformat only performs HARD
 	// fixes: it reformats a construct solely to resolve an over-limit line
@@ -162,6 +164,25 @@ func Default() *Config {
 			"t.Fatalf",
 			"require.NoErrorf",
 			"require.Errorf",
+			"require.Equalf",
+			"require.NotEqualf",
+			"require.EqualValuesf",
+			"require.Containsf",
+			"require.NotContainsf",
+			"require.Nilf",
+			"require.NotNilf",
+			"require.Truef",
+			"require.Falsef",
+			"require.Emptyf",
+			"require.NotEmptyf",
+			"require.Zerof",
+			"require.NotZerof",
+			"require.Lenf",
+			"require.Greaterf",
+			"require.GreaterOrEqualf",
+			"require.Lessf",
+			"require.LessOrEqualf",
+			"require.Eventuallyf",
 			"assert.Errorf",
 			"t.Logf",
 		},

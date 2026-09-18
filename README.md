@@ -107,6 +107,16 @@ unless the call uses the indentation symmetry exception. `--optimize` also
 compacts already-valid layouts. Formatting and structured-log calls retain
 their compact layout exceptions.
 
+With `--optimize` and R5 enabled, Testify `require` calls with a literal format
+message and explicit value arguments can be upgraded to the corresponding `f`
+function in `formatting_funcs` (for example, `require.Equal` to `require.Equalf`).
+The message position is checked so placeholders in expected values do not
+trigger a rename. Alias imports are supported; ambiguous receivers, dynamic
+messages, `%%` alone, and forwarded variadic slices are skipped. Deny-list
+entries and formatting opt-outs are respected. Assertion messages then qualify
+for compact formatting after their required operands. This opt-in rename is
+a token change and is intentionally reported by `--verify-diff`.
+
 | ID  | Rule                                                              | Notes                                        |
 |-----|-------------------------------------------------------------------|----------------------------------------------|
 | R1  | Blank line between switch / select case clauses                   |                                              |

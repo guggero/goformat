@@ -47,6 +47,14 @@ func Format(src []byte, filename string,
 	// unforeseen oscillation (it degrades to "best effort", never hangs).
 	const maxFormatIterations = 6
 
+	// Rename before parsing for layout so the added suffix is included in
+	// source-column measurements. Default mode and disabled R5 are no-ops.
+	var err error
+	src, err = OptimizeRequireCalls(src, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	if cfg.Rules.DeclarationGroupingOn() {
 		var err error
 		src, err = collectDeclarations(src, filename)

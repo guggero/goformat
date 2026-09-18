@@ -392,6 +392,18 @@ func insideFormattingCall(ctx *Context, node dst.Node,
 			astN, ok := ctx.Decorator.Ast.Nodes[call]
 			if ok {
 				if astCall, ok := astN.(*ast.CallExpr); ok {
+					// A require call can fall back to
+					// ordinary wrapping when its operands
+					// prevent compact formatting. Its
+					// wrapped message then needs the same
+					// string reflow as any R4 argument.
+					_, assertion := requireMessageIndex(
+						ctx.AstFile, astCall,
+					)
+					if assertion && isCallWrapped(call) {
+						return false
+					}
+
 					name := calleeName(astCall)
 					if !inStringSetExact(name, deny) &&
 						inStringSet(name, allow) {

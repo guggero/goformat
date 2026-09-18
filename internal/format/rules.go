@@ -82,7 +82,19 @@ they're overlong: the format-string is split with "+" and remaining
 args follow inline. The allow/deny lists are user-configurable via
 formatting_funcs / formatting_funcs_deny in goformat.toml. R5 also
 PRESERVES multi-line layouts whose every source line already fits —
-the developer's choice of split point is respected.`,
+the developer's choice of split point is respected.
+
+With --optimize, package-level Testify require assertions with literal
+format messages and explicit value arguments are renamed to the matching
+f function in formatting_funcs. The assertion's message position is checked;
+percent signs in expected values or %% alone do not trigger a rename.
+Import aliases are supported; shadowed names, dot imports, bound assertion
+methods, dynamic messages, and variadic argument forwarding are left alone.
+formatting_funcs_deny and noformat/nolint protections still apply.
+
+R5 can compact these assertion messages after their required operands,
+reserving space for the formatting values on the final line. The rename
+changes a token, so --verify-diff intentionally reports it.`,
 		},
 		{
 			ID: "R6",

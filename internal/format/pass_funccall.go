@@ -187,8 +187,18 @@ func (funcCallWrap) Apply(ctx *Context) []diag.Diagnostic {
 			) {
 
 				markInnerCallsHandled(ctx.OuterHandled, call)
+				return true
 			}
-			return true
+
+			// Assertion operands or trailing values may leave no
+			// room for a compact message. Fall back to R4 rather
+			// than leave an avoidable overlong assertion line.
+			_, assertion := requireMessageIndex(
+				ctx.AstFile, astCall,
+			)
+			if !assertion || !r4On || linesFit {
+				return true
+			}
 		}
 
 		kind, breaks := decideCallLayout(ctx, astCall, call, limit, tab)
@@ -949,6 +959,14 @@ func applyCallLayout(call *dst.CallExpr, breaks []int, multiLine bool) {
 //		"want %d", count)
 func applyFormattingCallLayout(ctx *Context, astCall *ast.CallExpr,
 	call *dst.CallExpr, limit, tab int) bool {
+
+	// Assertions put operands before the message. R5's usual first-string
+	// convention must not split an expected value instead of that message.
+	if index, ok := requireMessageIndex(ctx.AstFile, astCall); ok {
+		return applyRequireFormattingLayout(
+			ctx, astCall, call, index, limit, tab,
+		)
+	}
 
 	fset := ctx.FileSet
 	lines := ctx.SourceLines

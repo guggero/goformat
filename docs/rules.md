@@ -86,6 +86,22 @@ it. Preserves valid multi-line layouts whose every source line already
 fits (`allCallLinesFit`).
 **Config:** `Config.FormattingFuncs` (default list), `FormattingFuncsDeny`.
 
+With `--optimize`, package-level Testify `require` assertions may be upgraded
+to the corresponding `f` function in `formatting_funcs`. Conversion requires
+a known assertion message position, a literal string (or literal concatenation)
+with a consuming printf verb, and at least one explicit formatting value.
+The import must resolve to `github.com/stretchr/testify/require`; aliases work,
+but shadowed names, dot imports, and bound assertion methods are skipped.
+Dynamic messages, forwarded variadic slices, bare placeholders without values,
+and escaped percent signs alone remain unchanged. Deny-list entries and
+`noformat`/`nolint` protections apply. Disabling R5 disables conversion.
+
+Assertion message reflow budgets the operands before the message and the values
+after it. Optimization may compact a fitting assertion; commented, escaped,
+raw-string, or otherwise unsuitable messages keep their existing layout.
+Git-selected formatting permits only the same eligible renames inside selected
+units. `--verify-diff` stays strict and reports the changed function name.
+
 ## R6 — indentation symmetry
 **File:** `pass_funccall.go::decideCallLayout` (the `layoutSymmetric`
 branch).
